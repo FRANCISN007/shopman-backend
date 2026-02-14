@@ -1,0 +1,26 @@
+🔹 STEP 1: Create a sequence for invoice numbers
+CREATE SEQUENCE IF NOT EXISTS sales_invoice_no_seq
+START 1
+INCREMENT 1;
+
+🔹 STEP 2: Attach the sequence as DEFAULT
+ALTER TABLE sales
+ALTER COLUMN invoice_no
+SET DEFAULT nextval('sales_invoice_no_seq');
+
+🔹 STEP 3: (IMPORTANT) Fix existing NULL rows
+UPDATE sales
+SET invoice_no = nextval('sales_invoice_no_seq')
+WHERE invoice_no IS NULL;
+
+🔹 STEP 4: Enforce constraints (now safe)
+ALTER TABLE sales
+ALTER COLUMN invoice_no SET NOT NULL;
+
+ALTER TABLE sales
+ADD CONSTRAINT sales_invoice_no_unique UNIQUE (invoice_no);
+
+run this
+SELECT column_default
+FROM information_schema.columns
+WHERE table_name = 'sales' AND column_name = 'invoice_no';

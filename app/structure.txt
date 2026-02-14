@@ -1,0 +1,324 @@
+phone-shop/
+│
+├── app/
+│   ├── main.py
+│   ├── database.py
+│   ├── config.py
+│   ├── dependencies.py
+│
+│   ├── auth/
+│   │   ├── __init__.py
+│   │   ├── router.py
+│   │   ├── models.py
+│   │   ├── schemas.py
+│   │   └── security.py
+│
+│   ├── license/
+│   │   ├── __init__.py
+│   │   ├── router.py
+│   │   ├── models.py
+│   │   ├── schemas.py
+│   │   ├── service.py
+│   │   └── verifier.py
+│
+│   ├── users/
+│   │   ├── __init__.py
+│   │   ├── router.py
+│   │   ├── models.py
+│   │   ├── schemas.py
+│   │   └── service.py
+│
+│   ├── bank/
+│   │   ├── __init__.py
+│   │   ├── router.py
+│   │   ├── models.py
+│   │   ├── schemas.py
+│   │   └── service.py
+│
+│   ├── vendor/
+│   │   ├── __init__.py
+│   │   ├── router.py
+│   │   ├── models.py
+│   │   ├── schemas.py
+│   │   └── service.py
+│
+│   ├── stock/                         # ✅ MAIN STOCK DOMAIN
+│   │   ├── __init__.py
+│   │   │
+│   │   ├── products/
+│   │   │   ├── __init__.py
+│   │   │   ├── router.py
+│   │   │   ├── models.py
+│   │   │   ├── schemas.py
+│   │   │   └── service.py
+│   │   │
+│   │   ├── inventory/
+│   │   │   ├── __init__.py
+│   │   │   ├── router.py            # READ-ONLY
+│   │   │   ├── models.py
+│   │   │   ├── schemas.py
+│   │   │   └── service.py            # add_stock / remove_stock (internal)
+│   │   │
+│   │   ├── purchase/
+│   │   │   ├── __init__.py
+│   │   │   ├── router.py
+│   │   │   ├── models.py
+│   │   │   ├── schemas.py
+│   │   │   └── service.py            # calls inventory.add_stock
+│   │   │
+│   │   ├── sales/
+│   │   │   ├── __init__.py
+│   │   │   ├── router.py
+│   │   │   ├── models.py
+│   │   │   ├── schemas.py
+│   │   │   └── service.py            # calls inventory.remove_stock
+│   │
+│   ├── Accounts/
+│   │   ├── __init__.py
+│   │   ├── router.py
+│   │   ├── models.py
+│   │   ├── schemas.py
+│   │   └── service.py
+│
+│   ├── reports/
+│   │   ├── __init__.py
+│   │   ├── router.py
+│   │   ├── schemas.py
+│   │   └── service.py
+│
+│   └── utils/
+│       ├── __init__.py
+│       ├── enums.py
+│       └── helpers.py
+│
+├── requirements.txt
+└── README.md
+
+
+
+import axios from "axios";
+
+const importProducts = async (file) => {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await axios.post(
+    "http://localhost:8000/products/import-excel",
+    formData,
+    {
+      headers: {
+        "Content-Type": "multipart/form-data",
+      },
+    }
+  );
+
+  return response.data;
+};
+
+
+
+
+
+
+def create_sale(db: Session, sale: schemas.SaleCreate, user_id: int):
+
+    # ---------- REQUIRED FIELD VALIDATION ----------
+    if not sale.product_id:
+        raise HTTPException(status_code=400, detail="Product is required")
+
+    if not sale.quantity or sale.quantity <= 0:
+        raise HTTPException(status_code=400, detail="Quantity must be greater than zero")
+
+    if not sale.selling_price or sale.selling_price <= 0:
+        raise HTTPException(status_code=400, detail="Selling price must be greater than zero")
+
+    if not sale.payment_method:
+        raise HTTPException(status_code=400, detail="Payment method is required")
+
+    # Default customer name
+    if not sale.customer_name:
+        sale.customer_name = "Walk-in"
+
+    # ---------- PRODUCT VALIDATION ----------
+    product = (
+        db.query(product_models.Product)
+        .filter(product_models.Product.id == sale.product_id)
+        .first()
+    )
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    # ---------- PAYMENT VALIDATION ----------
+    payment_method = sale.payment_method.lower()
+
+    if payment_method == "cash" and sale.bank_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Bank should not be selected for cash payment"
+        )
+
+    if payment_method in ["transfer", "pos"] and not sale.bank_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Bank is required for transfer or POS payment"
+        )
+
+    # ---------- INVENTORY CHECK ----------
+    stock = inventory_service.get_inventory_by_product(db, sale.product_id)
+    if not stock or stock.current_stock < sale.quantity:
+        raise HTTPException(status_code=400, detail="Insufficient stock")
+
+    inventory_service.remove_stock(db, sale.product_id, sale.quantity, commit=False)
+
+    # ---------- TOTAL ----------
+    total_amount = sale.quantity * sale.selling_price
+
+    # ---------- INVOICE ----------
+    next_val = db.execute(text("SELECT nextval('sales_invoice_seq')")).scalar()
+    invoice_no = str(next_val)
+
+    # ---------- SAVE ----------
+    db_sale = models.Sale(
+        invoice_no=invoice_no,
+        product_id=sale.product_id,
+        quantity=sale.quantity,
+        selling_price=sale.selling_price,
+        total_amount=total_amount,
+        payment_method=sale.payment_method,
+        bank_id=sale.bank_id,
+        ref_no=sale.ref_no,
+        customer_name=sale.customer_name,
+        customer_phone=sale.customer_phone,
+        sold_by=user_id,
+        sold_at=datetime.utcnow()
+    )
+
+    db.add(db_sale)
+    db.commit()
+    db.refresh(db_sale)
+
+    return db_sale
+
+
+now lets work on the frontend Revenue Item, RevenueItem.jsx and css, under the src-components-accounts 
+folder, remember to use the function 
+
+import axiosWithAuth from "../../utils/axiosWithAuth"; 
+example
+
+const res = await axiosWithAuth().get("/sales/outstanding", {
+
+i will send you the backend code to use   
+
+
+
+Uncaught ReferenceError: Cannot access 'Y' before initialization
+    at ue (PosSales.jsx:49:7)
+
+
+
+
+{/* ================= EDIT MODAL ================= */}
+      {showEdit && (
+        <div className="modal-overlay">
+          <div className="modal">
+            <h3>Edit Purchase</h3>
+
+            <form onSubmit={handleEditSubmit}>
+              <label>
+                Product
+                <input
+                  type="text"
+                  placeholder="Search product..."
+                  value={productQuery}
+                  onChange={(e) => {
+                    setProductQuery(e.target.value);
+                    searchProducts(e.target.value);
+                  }}
+                />
+
+                {loadingProducts && <div className="dropdown-loading">Searching...</div>}
+
+                {products.length > 0 && (
+                  <ul className="dropdown-list">
+                    {products.map((p) => (
+                      <li
+                        key={p.id}
+                        onClick={() => {
+                          setEditData({
+                            ...editData,
+                            product_id: p.id,
+                            product_name: p.name,
+                          });
+                          setProductQuery(p.name);
+                          setProducts([]);
+                        }}
+                      >
+                        {p.name}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </label>
+
+
+              <label>
+                Quantity
+                <input
+                  type="number"
+                  name="quantity"
+                  value={editData.quantity}
+                  onChange={handleEditChange}
+                  required
+                />
+              </label>
+
+              <label>
+                Cost Price
+                <input
+                  type="number"
+                  name="cost_price"
+                  value={editData.cost_price}
+                  onChange={handleEditChange}
+                  required
+                />
+              </label>
+
+              <label>
+                Vendor
+                <select
+                  name="vendor_id"
+                  value={editData.vendor_id}
+                  onChange={handleEditChange}
+                  required
+                >
+                  <option value="">-- Select Vendor --</option>
+                  {vendors.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.business_name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <div className="modal-actions">
+                <button type="submit" className="save-btn">
+                  Update
+                </button>
+                <button
+                  type="button"
+                  className="cancel-btn"
+                  onClick={() => setShowEdit(false)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default ListPurchase;
