@@ -1,6 +1,7 @@
 from pydantic import BaseModel
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
+from pydantic import BaseModel, Field
 
 
 # =========================
@@ -51,6 +52,16 @@ class ExpenseOut(ExpenseBase):
     created_by: int | None
     created_by_username: str | None
     bank_name: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+# ─── NEW: Proper response model for list ────────────────────────────────
+class ExpenseListResponse(BaseModel):
+    total_expenses: float = Field(..., description="Sum of amounts in filtered results")
+    count: int = Field(..., description="Number of expenses returned (after pagination)")
+    expenses: List[ExpenseOut]
 
     class Config:
         from_attributes = True

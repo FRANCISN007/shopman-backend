@@ -7,6 +7,7 @@ from . import schemas, service
 from app.stock.category import models as category_models
 from app.users.permissions import role_required
 from app.users.schemas import UserDisplaySchema
+from app.users.auth import get_current_user
 
 
 router = APIRouter()
@@ -15,13 +16,14 @@ router = APIRouter()
 @router.post(
     "/",
     response_model=schemas.CategoryOut,
-    status_code=status.HTTP_201_CREATED
+    status_code=201
 )
 def create_category(
     category: schemas.CategoryCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
 ):
-    return service.create_category(db, category)
+    return service.create_category(db, category, current_user) 
 
 
 # ================= LIST =================
@@ -29,18 +31,26 @@ def create_category(
     "/",
     response_model=List[schemas.CategoryOut]
 )
-def list_categories(db: Session = Depends(get_db)):
-    return service.list_categories(db)
+def list_categories(
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    return service.list_categories(db, current_user)
+
 
 
 # ================= SIMPLE LIST =================
 @router.get("/simple", response_model=List[schemas.CategoryOut])
-def list_categories_simple(db: Session = Depends(get_db)):
+def list_categories_simple(
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
     """
-    Returns all categories directly from the database
-    Can be used for frontend dropdowns
+    Tenant-safe dropdown list:
+    - Super admin → all categories
+    - Others → global + their business categories
     """
-    return db.query(category_models.Category).order_by(category_models.Category.id).all()
+    return service.list_categories_simple(db, current_user)
 
 
 # ================= UPDATE =================
@@ -51,19 +61,25 @@ def list_categories_simple(db: Session = Depends(get_db)):
 def update_category(
     category_id: int,
     category: schemas.CategoryUpdate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
 ):
-    return service.update_category(db, category_id, category)
+    return service.update_category(db, category_id, category, current_user)
 
 
 # ================= DELETE =================
-@router.delete(
-    "/{category_id}"
-)
+@router.delete("/{category_id}")
 def delete_category(
     category_id: int,
     db: Session = Depends(get_db),
-    current_user: UserDisplaySchema = Depends(role_required(["admin","manager"]))
-    
+    current_user: UserDisplaySchema = Depends(
+        role_required(["super_admin", "admin", "manager"])
+    ),
 ):
-    return service.delete_category(db, category_id)
+    """
+    SaaS-safe category deletion:
+    - Only super_admin, admin, manager can delete
+    - Admin/Manager → only their business categories
+    - Cannot delete category if linked to products
+    """
+    return service.delete_category(db, category_id, current_user)

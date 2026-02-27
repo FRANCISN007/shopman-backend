@@ -6,11 +6,26 @@ from pydantic import validator
 
 
 # -------- USERS --------
+# -------- USERS --------
 class UserSchema(BaseModel):
     username: str
     password: str
-    roles: List[str] = ["user"]  
+    roles: List[str] = ["user"]
     admin_password: Optional[str] = None
+    business_id: Optional[int] = None  # ✅ Link user to a business
+
+    @validator("roles", pre=True, always=True)
+    def ensure_roles(cls, v):
+        if not v:
+            return ["user"]
+        return v
+
+
+
+class BusinessInfo(BaseModel):
+    id: Optional[int]
+    name: Optional[str]
+
 
 
 class UserUpdateSchema(BaseModel):
@@ -22,6 +37,9 @@ class UserDisplaySchema(BaseModel):
     id: int
     username: str
     roles: List[str] = []
+    business_id: Optional[int] = None   # ← ADD THIS
+    business_name: Optional[str] = None   # ← ADD THIS
+
 
     @validator("roles", pre=True)
     def ensure_roles_list(cls, v):
@@ -40,3 +58,17 @@ class UserDisplaySchema(BaseModel):
         from_attributes = True
 
 
+
+# -------- SUPER ADMIN --------
+class SuperAdminCreate(BaseModel):
+    username: str
+    password: str
+    admin_license_password: str
+
+
+
+
+class SuperAdminUpdate(BaseModel):
+    username: str
+    new_password: str
+    admin_license_password: str

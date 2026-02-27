@@ -1,19 +1,20 @@
 from fastapi import Depends, HTTPException, status
 from app.users.auth import get_current_user
 from app.users import schemas as user_schemas
-from typing import List
-from typing import Set  # add at the top
+from typing import List, Set
 
 
-def role_required(allowed_roles: List[str]):
+def role_required(allowed_roles: List[str], bypass_admin: bool = True):
+    """
+    Checks that the current_user has at least one of the allowed roles.
+    If bypass_admin=True, users with 'admin' role automatically pass.
+    """
     allowed_set: Set[str] = set(r.strip().lower() for r in (allowed_roles or []))
 
     def wrapper(current_user: user_schemas.UserDisplaySchema = Depends(get_current_user)):
-        # current_user.roles is now reliably a list thanks to the validator
         user_roles = set(r.strip().lower() for r in (current_user.roles or []))
 
-        # Admin bypass
-        if "admin" in user_roles:
+        if bypass_admin and "admin" in user_roles:
             return current_user
 
         if not user_roles.intersection(allowed_set):

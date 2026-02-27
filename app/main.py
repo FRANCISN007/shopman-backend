@@ -4,6 +4,9 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.routing import APIRoute
 from app.database import engine, Base
+
+from app.superadmin.router import router as superadmin_router
+from app.business.router import router as business_router
 from app.users.routers import router as user_router
 from app.license.router import router as license_router
 from app.stock.products.router import router as product_router
@@ -23,6 +26,14 @@ from app.payments.router import router as payment_router
 
 
 from backup.backup import router as backup_router
+
+
+from app.core.tenant_middleware import TenantMiddleware
+
+app = FastAPI()
+
+app.add_middleware(TenantMiddleware)
+
 
 
 
@@ -116,6 +127,8 @@ else:
 
 
 # Routers
+app.include_router(superadmin_router, prefix="/superadmin", tags=["Super Admin"])
+app.include_router(business_router, prefix="/business", tags=["Business"])
 app.include_router(user_router, prefix="/users", tags=["Users"])
 app.include_router(license_router, prefix="/license", tags=["License"])
 app.include_router(bank_router, prefix="/bank", tags=["Bank"])

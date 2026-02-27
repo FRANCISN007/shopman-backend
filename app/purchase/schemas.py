@@ -9,6 +9,7 @@ class PurchaseBase(BaseModel):
     vendor_id: Optional[int] = None
     quantity: int
     cost_price: float
+    business_id: Optional[int] = None   # ✅ add this
 
 
 class PurchaseCreate(PurchaseBase):
@@ -21,6 +22,7 @@ class PurchaseUpdate(BaseModel):
     quantity: Optional[int] = None
     cost_price: Optional[float] = None
     vendor_id: Optional[int] = None
+    business_id: Optional[int] = None   # ✅ add this
 
 
 class PurchaseOut(BaseModel):
@@ -35,6 +37,7 @@ class PurchaseOut(BaseModel):
     total_cost: float
     purchase_date: datetime
     current_stock: Optional[float] = 0     # populated from inventory
+    business_id: Optional[int] = None   # ✅ add this
 
     class Config:
         from_attributes = True

@@ -1,16 +1,18 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 from typing import Optional
 from datetime import datetime
+
 
 # -------------------------------
 # Base
 # -------------------------------
 class ProductBase(BaseModel):
     name: str
-    category: str          # category NAME from frontend
+    category: str           # category NAME from frontend
     type: Optional[str] = None
     cost_price: Optional[float] = None
     selling_price: Optional[float] = None
+    business_id: Optional[int] = None
 
 
 # -------------------------------
@@ -18,7 +20,6 @@ class ProductBase(BaseModel):
 # -------------------------------
 class ProductCreate(ProductBase):
     pass
-
 
 # -------------------------------
 # Update
@@ -29,65 +30,59 @@ class ProductUpdate(BaseModel):
     category: Optional[str] = None   # tecno, hp, apple, etc
     cost_price: Optional[float] = None
     selling_price: Optional[float] = None
-
+    business_id: Optional[int] = None  # optional update of tenant if needed
 
 # -------------------------------
 # Output
 # -------------------------------
+
+
+
+
 class ProductOut(BaseModel):
     id: int
     name: str
-    category: str          # category NAME
-    type: Optional[str]
-    cost_price: Optional[float]
-    selling_price: Optional[float]
-    created_at: datetime
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-
-
-class ProductStatusUpdate(BaseModel):
-    is_active: bool
-
-
-
-
-
-# ---------------------------------
-# Output Schema
-# ---------------------------------
-class ProductOut(BaseModel):
-    id: int
-    name: str
-    category: Optional[str] = None  # category NAME, not object
+    category: Optional[str] = None
     type: Optional[str] = None
     cost_price: Optional[float] = None
     selling_price: Optional[float] = None
     is_active: bool
+    business_id: Optional[int] = None   # allow NULL for super admin products
     created_at: datetime
 
-    model_config = ConfigDict(from_attributes=True)  # ✅ REQUIRED
+    model_config = ConfigDict(from_attributes=True)
 
+    # 🔑 Convert Category ORM object → string name
+    @field_validator("category", mode="before")
+    @classmethod
+    def extract_category_name(cls, v):
+        if hasattr(v, "name"):
+            return v.name
+        return v
 
+# -------------------------------
+# Status Update
+# -------------------------------
+class ProductStatusUpdate(BaseModel):
+    is_active: bool
 
-
-# ---------------------------------
-# Update Selling Price (Dedicated)
-# ---------------------------------
+# -------------------------------
+# Dedicated Selling Price Update
+# -------------------------------
 class ProductPriceUpdate(BaseModel):
     selling_price: float
 
     class Config:
         from_attributes = True
 
-
-
+# -------------------------------
+# Simple Product Schemas (Dropdowns, Lists)
+# -------------------------------
 class ProductSimpleSchema(BaseModel):
     id: int
     name: str
     selling_price: Optional[float] = None
+    business_id: int  # include tenant
 
     @property
     def selling_price_formatted(self) -> str:
@@ -98,15 +93,10 @@ class ProductSimpleSchema(BaseModel):
     class Config:
         from_attributes = True
 
-
-# -------------------------------
-# Simple product list for dropdown
-# -------------------------------
-
 class ProductSimpleSchema1(BaseModel):
     id: int
     name: str
-    
+    business_id: int  # include tenant
+
     class Config:
         from_attributes = True
-

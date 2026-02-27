@@ -5,31 +5,91 @@ from . import models, schemas
 from app.payments import models as payment_models
 
 
-def create_bank(db: Session, bank: schemas.BankCreate):
-    existing = db.query(models.Bank).filter(models.Bank.name == bank.name).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="Bank already exists")
 
-    new_bank = models.Bank(name=bank.name)
+
+
+from sqlalchemy.exc import IntegrityError
+
+
+def create_bank(db: Session, bank: schemas.BankCreate):
+    # Optional fast pre-check (user-friendly error)
+    existing = (
+        db.query(models.Bank)
+        .filter(
+            models.Bank.name == bank.name,
+            models.Bank.business_id == bank.business_id,
+        )
+        .first()
+    )
+
+    if existing:
+        raise HTTPException(
+            status_code=400,
+            detail="Bank already exists for this business",
+        )
+
+    new_bank = models.Bank(**bank.dict())
     db.add(new_bank)
-    db.commit()
+
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail="Bank already exists for this business",
+        )
+
     db.refresh(new_bank)
     return new_bank
 
 
-def list_banks(db: Session):
-    return db.query(models.Bank).all()
+
+def list_banks(db: Session, current_user):
+    query = db.query(models.Bank)
+
+    # 🔑 Admin/Manager → only their business
+    if "admin" in current_user.roles or "manager" in current_user.roles:
+        query = query.filter(models.Bank.business_id == current_user.business_id)
+
+    return query.all()
 
 
-def list_banks_simple(db: Session):
-    banks = db.query(models.Bank.id, models.Bank.name).all()
+def list_banks_simple(db: Session, current_user):
+    query = db.query(models.Bank.id, models.Bank.name)
+
+    if "admin" in current_user.roles or "manager" in current_user.roles:
+        query = query.filter(models.Bank.business_id == current_user.business_id)
+
+    banks = query.all()
     return [{"id": b.id, "name": b.name} for b in banks]
 
 
-def update_bank(db: Session, bank_id: int, bank: schemas.BankUpdate):
-    db_bank = db.query(models.Bank).filter(models.Bank.id == bank_id).first()
+
+
+def update_bank(db: Session, bank_id: int, bank: schemas.BankUpdate, current_user):
+    query = db.query(models.Bank).filter(models.Bank.id == bank_id)
+
+    # 🔑 Restrict to tenant
+    if "admin" in current_user.roles or "manager" in current_user.roles:
+        query = query.filter(models.Bank.business_id == current_user.business_id)
+
+    db_bank = query.first()
     if not db_bank:
         return None
+
+    # 🔑 Check duplicate name inside same business
+    existing = (
+        db.query(models.Bank)
+        .filter(
+            models.Bank.name == bank.name,
+            models.Bank.business_id == db_bank.business_id,
+            models.Bank.id != bank_id,
+        )
+        .first()
+    )
+    if existing:
+        raise HTTPException(status_code=400, detail="Bank already exists for this business")
 
     db_bank.name = bank.name
     db.commit()
@@ -37,8 +97,14 @@ def update_bank(db: Session, bank_id: int, bank: schemas.BankUpdate):
     return db_bank
 
 
-def delete_bank(db: Session, bank_id: int):
-    db_bank = db.query(models.Bank).filter(models.Bank.id == bank_id).first()
+def delete_bank(db: Session, bank_id: int, current_user):
+    query = db.query(models.Bank).filter(models.Bank.id == bank_id)
+
+    # 🔑 Restrict delete to tenant
+    if "admin" in current_user.roles:
+        query = query.filter(models.Bank.business_id == current_user.business_id)
+
+    db_bank = query.first()
     if not db_bank:
         return None
 

@@ -1,16 +1,23 @@
 from pydantic import BaseModel
+from typing import Optional
+
 
 class BankBase(BaseModel):
     name: str
 
-class BankCreate(BankBase):
-    pass
 
-class BankUpdate(BankBase):
-    pass
+class BankCreate(BankBase):
+    business_id: Optional[int] = None  # assigned by backend
+
+
+class BankUpdate(BaseModel):
+    name: Optional[str] = None
+    business_id: Optional[int] = None
+
 
 class BankDisplay(BankBase):
     id: int
+    business_id: int
 
     class Config:
         from_attributes = True
