@@ -4,6 +4,8 @@ from sqlalchemy.orm import Session
 from app.business.models import Business
 from app.users.models import User
 from app.users import schemas as user_schema
+from sqlalchemy import func
+
 
 # ------------------- CREATE USER -------------------
 def create_user(
@@ -29,9 +31,14 @@ def create_user(
     return new_user
 
 
-# ------------------- GET USER -------------------
+# ------------------- GET USER (CASE-SENSITIVE) -------------------
 def get_user_by_username(db: Session, username: str):
-    return db.query(User).filter(User.username == username.strip().lower()).first()
+    return (
+        db.query(User)
+        .filter(User.username == username.strip())
+        .first()
+    )
+
 
 
 def get_all_users(db: Session, skip: int = 0, limit: int = 50):

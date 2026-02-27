@@ -10,6 +10,8 @@ from app.users import models as user_models
 from app.business.models import Business
 from app.business import models as business_models
 from app.license.models import LicenseKey
+from sqlalchemy import func
+
 import os
 from loguru import logger
 import os
@@ -112,7 +114,7 @@ def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db),
 ):
-    username = form_data.username.strip().lower()
+    username = form_data.username.strip()  # STRICT
     password = form_data.password
 
     user = authenticate_user(db, username, password)
@@ -138,7 +140,10 @@ def login(
 
         license_key = (
             db.query(LicenseKey)
-            .filter(LicenseKey.business_id == business.id, LicenseKey.is_active == True)
+            .filter(
+                LicenseKey.business_id == business.id,
+                LicenseKey.is_active == True
+            )
             .order_by(LicenseKey.expiration_date.desc())
             .first()
         )
@@ -152,17 +157,14 @@ def login(
 
         business_id = business.id
 
-    
-
-    # Create JWT
     access_token = create_access_token(
         data={
             "sub": user.username,
-            "business_id": business_id,  # None for super admin
+            "business_id": business_id,
         }
     )
 
-    logger.info(f"✅ User authenticated: {username} (Super Admin: {is_super_admin})")
+    logger.info(f"✅ User authenticated: {user.username} (Super Admin: {is_super_admin})")
 
     return {
         "id": user.id,
@@ -179,6 +181,7 @@ def login(
         "access_token": access_token,
         "token_type": "bearer",
     }
+
 
 
 

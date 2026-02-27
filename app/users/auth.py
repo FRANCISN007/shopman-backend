@@ -4,6 +4,8 @@ from sqlalchemy.orm import Session
 from jose import JWTError, jwt
 from typing import Optional
 from datetime import datetime, timedelta
+from sqlalchemy import func
+
 
 from app.database import get_db
 from app.users import crud, schemas as user_schemas
