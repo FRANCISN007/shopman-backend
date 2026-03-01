@@ -34,14 +34,7 @@ def get_profit_loss(
         role_required(["manager", "admin", "super_admin"])
     )
 ):
-    """
-    Profit & Loss report (P&L) with tenant isolation.
-    
-    - Regular users → only their own business data
-    - Super admin → all businesses or filtered by ?business_id=
-    - Defaults to current month if dates are not provided
-    - Uses historical cost_price from SaleItem (accurate gross profit)
-    """
+   
     return service.get_profit_and_loss(
         db=db,
         current_user=current_user,

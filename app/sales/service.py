@@ -106,12 +106,19 @@ def create_sale_full(
             )
 
         # Freeze historical cost price
-        latest_purchase = db.query(purchase_models.Purchase).filter(
-            purchase_models.Purchase.product_id == item_data.product_id,
-            purchase_models.Purchase.business_id == target_business_id,
-        ).order_by(purchase_models.Purchase.id.desc()).first()
+        # Correct way to get latest cost
+        latest_purchase_item = (
+            db.query(purchase_models.PurchaseItem)
+            .join(purchase_models.Purchase)  # join header to get business_id
+            .filter(
+                purchase_models.PurchaseItem.product_id == item_data.product_id,
+                purchase_models.Purchase.business_id == target_business_id
+            )
+            .order_by(purchase_models.PurchaseItem.id.desc())
+            .first()
+        )
+        historical_cost = latest_purchase_item.cost_price if latest_purchase_item else 0.0
 
-        historical_cost = latest_purchase.cost_price if latest_purchase else 0.0
 
         # Stock check (warning only — your current policy)
         stock_entry = inventory_service.get_inventory_orm_by_product(
@@ -195,10 +202,11 @@ def create_sale_item(
     current_user: UserDisplaySchema,
 ) -> models.SaleItem:
     """
-    Add one item to an existing sale with full tenant isolation.
+    Add a single item to an existing sale with full tenant isolation.
     Updates sale total atomically.
     """
-    # ─── 1. Find the sale + enforce tenant ───────────────────────────
+
+    # ─── 1️⃣ Find the sale + enforce tenant ───────────────────────────
     sale_query = db.query(models.Sale)
 
     # Non-super-admins can only touch their own business
@@ -208,24 +216,20 @@ def create_sale_item(
                 status_code=403,
                 detail="User does not belong to any business"
             )
-        sale_query = sale_query.filter(
-            models.Sale.business_id == current_user.business_id
-        )
+        sale_query = sale_query.filter(models.Sale.business_id == current_user.business_id)
 
-    sale = sale_query.filter(
-        models.Sale.invoice_no == item.sale_invoice_no
-    ).first()
+    sale = sale_query.filter(models.Sale.invoice_no == item.sale_invoice_no).first()
 
     if not sale:
         raise HTTPException(
             status_code=404,
             detail=f"Sale with invoice_no {item.sale_invoice_no} not found "
-                   f"or does not belong to your business"
+                   "or does not belong to your business"
         )
 
     target_business_id = sale.business_id
 
-    # ─── 2. Validate product belongs to same business ────────────────
+    # ─── 2️⃣ Validate product belongs to same business ────────────────
     product = db.query(product_models.Product).filter(
         product_models.Product.id == item.product_id,
         product_models.Product.business_id == target_business_id,
@@ -234,25 +238,27 @@ def create_sale_item(
     if not product:
         raise HTTPException(
             status_code=404,
-            detail=f"Product {item.product_id} not found or does not belong "
-                   f"to business {target_business_id}"
+            detail=f"Product {item.product_id} not found or does not belong to business {target_business_id}"
         )
 
-    # ─── 3. Capture historical cost price (tenant scoped) ────────────
-    latest_purchase = db.query(purchase_models.Purchase).filter(
-        purchase_models.Purchase.product_id == item.product_id,
-        purchase_models.Purchase.business_id == target_business_id,
-    ).order_by(purchase_models.Purchase.id.desc()).first()
-
-    historical_cost = latest_purchase.cost_price if latest_purchase else 0.0
-
-    # ─── 4. Stock validation (blocking in this flow) ─────────────────
-    stock_entry = inventory_service.get_inventory_orm_by_product(
-        db,
-        item.product_id,
-        current_user=current_user
+    # ─── 3️⃣ Capture historical cost price (tenant scoped) ────────────
+    latest_purchase_item = (
+        db.query(purchase_models.PurchaseItem)
+        .join(purchase_models.Purchase)
+        .filter(
+            purchase_models.PurchaseItem.product_id == item.product_id,
+            purchase_models.Purchase.business_id == target_business_id
+        )
+        .order_by(purchase_models.PurchaseItem.id.desc())
+        .first()
     )
 
+    historical_cost = latest_purchase_item.cost_price if latest_purchase_item else 0.0
+
+    # ─── 4️⃣ Stock validation ────────────────────────────────────────
+    stock_entry = inventory_service.get_inventory_orm_by_product(
+        db, item.product_id, current_user=current_user
+    )
     available = stock_entry.current_stock if stock_entry else 0
 
     if available < item.quantity:
@@ -262,7 +268,7 @@ def create_sale_item(
                    f"Available: {available}, Requested: {item.quantity}"
         )
 
-    # ─── 5. Deduct stock ─────────────────────────────────────────────
+    # ─── 5️⃣ Deduct stock ─────────────────────────────────────────────
     inventory_service.remove_stock(
         db,
         product_id=item.product_id,
@@ -271,12 +277,12 @@ def create_sale_item(
         commit=False
     )
 
-    # ─── 6. Calculate line totals ────────────────────────────────────
+    # ─── 6️⃣ Calculate line totals ────────────────────────────────────
     gross_amount = item.quantity * item.selling_price
     discount = item.discount or 0.0
     net_amount = gross_amount - discount
 
-    # ─── 7. Create sale item ─────────────────────────────────────────
+    # ─── 7️⃣ Create sale item ─────────────────────────────────────────
     sale_item = models.SaleItem(
         sale_invoice_no=item.sale_invoice_no,
         product_id=item.product_id,
@@ -286,20 +292,19 @@ def create_sale_item(
         gross_amount=gross_amount,
         discount=discount,
         net_amount=net_amount,
-        total_amount=net_amount,  # most systems use net here
+        total_amount=net_amount,  # net by default
     )
 
     db.add(sale_item)
 
-    # ─── 8. Update sale total ────────────────────────────────────────
+    # ─── 8️⃣ Update sale total ────────────────────────────────────────
     sale.total_amount = (sale.total_amount or 0.0) + net_amount
 
-    # ─── 9. Commit everything ────────────────────────────────────────
+    # ─── 9️⃣ Commit everything ────────────────────────────────────────
     try:
         db.commit()
         db.refresh(sale_item)
-        # Load product relationship for response enrichment
-        db.refresh(sale_item, attribute_names=["product"])
+        db.refresh(sale_item, attribute_names=["product"])  # load product relation
         return sale_item
 
     except IntegrityError as e:
@@ -314,6 +319,7 @@ def create_sale_item(
             status_code=500,
             detail=f"Failed to add item: {str(e)}"
         )
+
 
     
 

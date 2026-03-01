@@ -6,7 +6,7 @@ from app.stock.inventory.adjustments.models import StockAdjustment
 from app.stock.inventory.models import Inventory
 from app.stock.products.models import  Product
 
-from app.purchase.models import  Purchase
+from app.purchase.models import  Purchase, PurchaseItem
 from datetime import datetime, date, time
 from zoneinfo import ZoneInfo
 
@@ -75,13 +75,19 @@ def list_inventory(
 
     for item in inventory_list:
         # Latest purchase cost for valuation
-        latest_purchase = (
-            db.query(Purchase)
-            .filter(Purchase.product_id == item.product_id)
-            .order_by(Purchase.id.desc())
+        latest_purchase_item = (
+            db.query(PurchaseItem)
+            .join(Purchase)
+            .filter(
+                PurchaseItem.product_id == item.product_id,
+                Purchase.business_id == item.business_id  # tenant safety
+            )
+            .order_by(PurchaseItem.id.desc())
             .first()
         )
-        latest_cost = latest_purchase.cost_price if latest_purchase else 0
+
+        latest_cost = latest_purchase_item.cost_price if latest_purchase_item else 0
+
 
         inventory_value = item.current_stock * latest_cost
         grand_total += inventory_value

@@ -11,6 +11,7 @@ from app.accounts.expenses import models as expense_models
 from app.stock.category import models as category_models
 from app.users.schemas import UserDisplaySchema
 from app.accounts.profit_loss.schemas import ProfitLossResponse
+from app.stock.inventory.adjustments import models as adjustments_models
 
 from zoneinfo import ZoneInfo
 LAGOS_TZ = ZoneInfo("Africa/Lagos")
@@ -24,39 +25,36 @@ def get_profit_and_loss(
     end_date: Optional[date] = None,
     business_id: Optional[int] = None
 ) -> ProfitLossResponse:
-    """
-    Generate Profit & Loss report with tenant isolation.
-    Uses historical cost_price from SaleItem → correct gross profit.
-    """
 
     today = datetime.utcnow()
 
-    # Default: current month
     if start_date is None:
         start_date = date(today.year, today.month, 1)
     if end_date is None:
         end_date = date(today.year, today.month, today.day)
 
-    # ─── 1. Make timezone-aware datetimes ─────────────────────────────
     start_dt = datetime.combine(start_date, time.min, tzinfo=LAGOS_TZ)
     end_dt   = datetime.combine(end_date, time.max, tzinfo=LAGOS_TZ)
 
-
-    # Tenant filters
     sale_filter = []
     expense_filter = []
+    adjustment_filter = []
 
+    # ───────────────── Tenant Filtering ─────────────────
     if "super_admin" in current_user.roles:
         if business_id is not None:
             sale_filter.append(sales_models.Sale.business_id == business_id)
             expense_filter.append(expense_models.Expense.business_id == business_id)
+            adjustment_filter.append(adjustments_models.StockAdjustment.business_id == business_id)
     else:
         if not current_user.business_id:
             raise HTTPException(403, "Current user does not belong to any business")
+
         sale_filter.append(sales_models.Sale.business_id == current_user.business_id)
         expense_filter.append(expense_models.Expense.business_id == current_user.business_id)
+        adjustment_filter.append(adjustments_models.StockAdjustment.business_id == current_user.business_id)
 
-    # ─── Revenue by category ──────────────────────────────────────────
+    # ───────────────── Revenue ─────────────────
     revenue_query = (
         db.query(
             category_models.Category.name.label("category"),
@@ -79,7 +77,7 @@ def get_profit_and_loss(
     revenue = {row.category: float(row.revenue or 0) for row in revenue_rows}
     total_revenue = sum(revenue.values())
 
-    # ─── Cost of Sales ───────────────────────────────────────────────
+    # ───────────────── Normal Cost of Sales (from sales) ─────────────────
     cos_query = (
         db.query(
             func.sum(
@@ -95,10 +93,39 @@ def get_profit_and_loss(
         .scalar()
     )
 
-    cost_of_sales = float(cos_query or 0)
-    gross_profit = total_revenue - cost_of_sales
+    normal_cost_of_sales = float(cos_query or 0)
 
-    # ─── Expenses by account type ─────────────────────────────────────
+    # ───────────────── Stock Adjustment Loss ─────────────────
+    adjustment_loss_query = (
+        db.query(
+            func.sum(
+                func.abs(adjustments_models.StockAdjustment.quantity) *
+                product_models.Product.cost_price
+            ).label("adjustment_loss")
+        )
+        .select_from(adjustments_models.StockAdjustment)  # 🔥 IMPORTANT
+        .join(
+            product_models.Product,
+            product_models.Product.id == adjustments_models.StockAdjustment.product_id
+        )
+        .filter(
+            adjustments_models.StockAdjustment.adjusted_at >= start_dt,
+            adjustments_models.StockAdjustment.adjusted_at <= end_dt,
+            adjustments_models.StockAdjustment.quantity < 0,
+            *adjustment_filter
+        )
+        .scalar()
+    )
+
+
+    stock_adjustment_loss = float(adjustment_loss_query or 0)
+
+    # ───────────────── Final Cost of Sales ─────────────────
+    cost_of_sales = normal_cost_of_sales 
+
+    gross_profit = total_revenue - cost_of_sales - stock_adjustment_loss
+
+    # ───────────────── Expenses ─────────────────
     expense_query = (
         db.query(
             expense_models.Expense.account_type.label("account_type"),
@@ -117,10 +144,8 @@ def get_profit_and_loss(
     expenses = {row.account_type: float(row.total or 0) for row in expense_rows}
     total_expenses = sum(expenses.values())
 
-    # ─── Net Profit ──────────────────────────────────────────────────
     net_profit = gross_profit - total_expenses
 
-    # ─── Response ───────────────────────────────────────────────────
     return ProfitLossResponse(
         period={
             "start_date": start_dt,
@@ -132,5 +157,8 @@ def get_profit_and_loss(
         gross_profit=gross_profit,
         expenses=expenses,
         total_expenses=total_expenses,
-        net_profit=net_profit
+        net_profit=net_profit,
+
+        # 🔥 OPTIONAL: show separately for transparency
+        stock_adjustment_loss=stock_adjustment_loss
     )

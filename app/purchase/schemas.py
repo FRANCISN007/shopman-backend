@@ -1,43 +1,59 @@
 from pydantic import BaseModel
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 
 
-class PurchaseBase(BaseModel):
-    invoice_no: str 
+class PurchaseItemBase(BaseModel):
     product_id: int
-    vendor_id: Optional[int] = None
     quantity: int
     cost_price: float
-    business_id: Optional[int] = None   # ✅ add this
 
 
-class PurchaseCreate(PurchaseBase):
+class PurchaseItemCreate(PurchaseItemBase):
     pass
 
 
-class PurchaseUpdate(BaseModel):
-    invoice_no: str
-    product_id: Optional[int] = None   # ✅ THIS is what we update with
-    quantity: Optional[int] = None
-    cost_price: Optional[float] = None
-    vendor_id: Optional[int] = None
-    business_id: Optional[int] = None   # ✅ add this
-
-
-class PurchaseOut(BaseModel):
+class PurchaseItemOut(PurchaseItemBase):
     id: int
-    invoice_no: str  
+    product_name: Optional[str] = None
+    total_cost: float
+    current_stock: Optional[float] = 0
+
+    class Config:
+        from_attributes = True
+
+
+class PurchaseBase(BaseModel):
+    invoice_no: str
+    vendor_id: Optional[int] = None
+    business_id: Optional[int] = None
+    purchase_date: Optional[datetime] = None
+
+
+class PurchaseCreate(PurchaseBase):
+    items: List[PurchaseItemCreate]
+
+
+
+
+
+class PurchaseItemUpdate(BaseModel):
+    id: Optional[int] = None  # existing item id
     product_id: int
-    product_name: Optional[str] = None      # ✅ New field
-    vendor_id: Optional[int]
-    vendor_name: Optional[str] = None       # ✅ New field
     quantity: int
     cost_price: float
-    total_cost: float
-    purchase_date: datetime
-    current_stock: Optional[float] = 0     # populated from inventory
-    business_id: Optional[int] = None   # ✅ add this
+
+class PurchaseUpdate(BaseModel):
+    invoice_no: Optional[str] = None
+    vendor_id: Optional[int] = None
+    items: Optional[List[PurchaseItemUpdate]] = None
+
+
+class PurchaseOut(PurchaseBase):
+    id: int
+    vendor_name: Optional[str] = None
+    items: List[PurchaseItemOut]
+    created_at: datetime
 
     class Config:
         from_attributes = True

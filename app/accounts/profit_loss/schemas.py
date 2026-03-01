@@ -13,6 +13,7 @@ class ProfitLossResponse(BaseModel):
     period: ProfitLossPeriod
     revenue: Dict[str, float]          # category_name → revenue
     total_revenue: float
+    stock_adjustment_loss: float = 0.0
     cost_of_sales: float
     gross_profit: float
     expenses: Dict[str, float]         # account_type → expense total

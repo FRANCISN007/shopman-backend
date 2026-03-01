@@ -20,11 +20,17 @@ from typing import Any
 router = APIRouter()
 
 
-@router.post("/", response_model=schemas.PurchaseOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/",
+    response_model=schemas.PurchaseOut,
+    status_code=status.HTTP_201_CREATED,
+)
 def create_purchase(
     purchase: schemas.PurchaseCreate,
     db: Session = Depends(get_db),
-    current_user: UserDisplaySchema = Depends(role_required(["user", "manager", "admin", "super_admin"])),
+    current_user: UserDisplaySchema = Depends(
+        role_required(["user", "manager", "admin", "super_admin"])
+    ),
 ):
     purchase_data = purchase.dict(exclude_unset=True)
 
@@ -46,8 +52,11 @@ def create_purchase(
             )
 
     return service.create_purchase(
-        db, schemas.PurchaseCreate(**purchase_data), current_user=current_user
+        db=db,
+        purchase=schemas.PurchaseCreate(**purchase_data),
+        current_user=current_user,
     )
+
     
 
     
@@ -75,19 +84,36 @@ def list_purchases_route(
         vendor_id=vendor_id,
         start_date=start_date,
         end_date=end_date,
-        business_id=business_id,  # ✅ PASS TO SERVICE
+        business_id=business_id,
     )
 
     result = []
     for p in purchases:
-        stock_entry = inventory_service.get_inventory_orm_by_product(db, p.product_id)
-        current_stock = stock_entry.current_stock if stock_entry else 0
+        item_outputs = []
+        for item in p.items:
+            stock_entry = inventory_service.get_inventory_orm_by_product(db, item.product_id)
+            current_stock = stock_entry.current_stock if stock_entry else 0
+
+            item_outputs.append({
+                "id": item.id,
+                "product_id": item.product_id,
+                "product_name": item.product.name if item.product else None,
+                "quantity": item.quantity,
+                "cost_price": item.cost_price,
+                "total_cost": item.total_cost,
+                "current_stock": current_stock,
+            })
 
         result.append({
-            **p.__dict__,
-            "product_name": p.product.name if p.product else None,
+            "id": p.id,
+            "invoice_no": p.invoice_no,
+            "vendor_id": p.vendor_id,
             "vendor_name": p.vendor.business_name if p.vendor else None,
-            "current_stock": current_stock,
+            "business_id": p.business_id,
+            "purchase_date": p.purchase_date,
+            "items": item_outputs,
+            "total_cost": p.total_cost,
+            "created_at": p.created_at,
         })
 
     return result
@@ -95,10 +121,10 @@ def list_purchases_route(
     
 
 @router.get("/{purchase_id}", response_model=schemas.PurchaseOut)
-def get_purchase(
+def get_purchase_route(
     purchase_id: int,
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user),  # 🔐 Requires token
+    current_user = Depends(get_current_user),
 ):
     purchase = service.get_purchase(
         db=db,
@@ -112,17 +138,7 @@ def get_purchase(
             detail="Purchase not found",
         )
 
-    stock_entry = inventory_service.get_inventory_orm_by_product(
-        db, purchase.product_id
-    )
-    current_stock = stock_entry.current_stock if stock_entry else 0
-
-    return {
-        **purchase.__dict__,
-        "product_name": purchase.product.name if purchase.product else None,
-        "vendor_name": purchase.vendor.business_name if purchase.vendor else None,
-        "current_stock": current_stock,
-    }
+    return purchase
 
 
 
