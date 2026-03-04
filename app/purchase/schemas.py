@@ -53,7 +53,14 @@ class PurchaseOut(PurchaseBase):
     id: int
     vendor_name: Optional[str] = None
     items: List[PurchaseItemOut]
+    total_cost: float   # ✅ ADD THIS
     created_at: datetime
 
     class Config:
         from_attributes = True
+
+
+
+class PurchaseListResponse(BaseModel):
+    purchases: List[PurchaseOut]
+    gross_total: float

@@ -11,6 +11,7 @@ from app.vendor import models as  vendor_models
 from sqlalchemy.orm import joinedload
 
 from datetime import datetime, timedelta
+from sqlalchemy import func
 from zoneinfo import ZoneInfo
 
 
@@ -160,7 +161,7 @@ def create_purchase(db, purchase, current_user):
 
 
 
-from datetime import datetime, timedelta
+
 
 def list_purchases(
     db: Session,
@@ -176,31 +177,65 @@ def list_purchases(
 ):
     query = db.query(purchase_models.Purchase)
 
-    # 🔐 Tenant / Role Isolation
-    if "admin" in current_user.roles or "manager" in current_user.roles or "user" in current_user.roles:
+    # 🔐 Tenant Isolation
+    if "admin" in current_user.roles or \
+       "manager" in current_user.roles or \
+       "user" in current_user.roles:
         query = query.filter(
             purchase_models.Purchase.business_id == current_user.business_id
         )
     elif business_id:
-        query = query.filter(purchase_models.Purchase.business_id == business_id)
+        query = query.filter(
+            purchase_models.Purchase.business_id == business_id
+        )
 
     # Filters
     if invoice_no:
-        query = query.filter(purchase_models.Purchase.invoice_no.ilike(f"%{invoice_no}%"))
+        query = query.filter(
+            purchase_models.Purchase.invoice_no.ilike(f"%{invoice_no}%")
+        )
+
     if vendor_id:
-        query = query.filter(purchase_models.Purchase.vendor_id == vendor_id)
+        query = query.filter(
+            purchase_models.Purchase.vendor_id == vendor_id
+        )
+
     if start_date:
         start_dt = datetime.strptime(start_date, "%Y-%m-%d")
-        query = query.filter(purchase_models.Purchase.purchase_date >= start_dt)
+        query = query.filter(
+            purchase_models.Purchase.purchase_date >= start_dt
+        )
+
     if end_date:
         end_dt = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
-        query = query.filter(purchase_models.Purchase.purchase_date < end_dt)
+        query = query.filter(
+            purchase_models.Purchase.purchase_date < end_dt
+        )
 
-    # Filter by product_id in PurchaseItem table
     if product_id:
-        query = query.join(purchase_models.Purchase.items).filter(purchase_models.PurchaseItem.product_id == product_id)
+        query = query.join(
+            purchase_models.Purchase.items
+        ).filter(
+            purchase_models.PurchaseItem.product_id == product_id
+        )
 
-    return query.order_by(purchase_models.Purchase.purchase_date.desc()).offset(skip).limit(limit).all()
+    # 🔥 Calculate Gross Total BEFORE pagination
+    gross_total = (
+        query.with_entities(
+            func.coalesce(func.sum(purchase_models.Purchase.total_cost), 0)
+        ).scalar()
+    )
+
+    # 📦 Get paginated records
+    purchases = (
+        query
+        .order_by(purchase_models.Purchase.purchase_date.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+
+    return purchases, gross_total
 
 
 

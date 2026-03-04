@@ -61,7 +61,7 @@ def create_purchase(
 
     
 
-@router.get("/", response_model=List[schemas.PurchaseOut])
+@router.get("/", response_model=schemas.PurchaseListResponse)
 def list_purchases_route(
     skip: int = 0,
     limit: int = 100,
@@ -70,11 +70,11 @@ def list_purchases_route(
     vendor_id: Optional[int] = Query(None),
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
-    business_id: Optional[int] = Query(None),  # ✅ NEW FILTER
+    business_id: Optional[int] = Query(None),
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user),
 ):
-    purchases = purchase_service.list_purchases(
+    purchases, gross_total = purchase_service.list_purchases(
         db=db,
         current_user=current_user,
         skip=skip,
@@ -88,10 +88,14 @@ def list_purchases_route(
     )
 
     result = []
+
     for p in purchases:
         item_outputs = []
+
         for item in p.items:
-            stock_entry = inventory_service.get_inventory_orm_by_product(db, item.product_id)
+            stock_entry = inventory_service.get_inventory_orm_by_product(
+                db, item.product_id
+            )
             current_stock = stock_entry.current_stock if stock_entry else 0
 
             item_outputs.append({
@@ -116,7 +120,10 @@ def list_purchases_route(
             "created_at": p.created_at,
         })
 
-    return result
+    return {
+        "purchases": result,
+        "gross_total": gross_total
+    }
 
     
 
