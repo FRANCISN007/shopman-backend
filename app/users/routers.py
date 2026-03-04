@@ -173,7 +173,11 @@ def login(
         "business": {
             "id": business.id if business else None,
             "name": business.name if business else None,
+            "address": business.address if business else None,
+            "phone": business.phone if business else None,
+            "email": business.email if business else None,
         },
+
         "license": {
             "expiration_date": license_key.expiration_date if license_key else None,
             "is_active": license_key.is_active if license_key else None,
