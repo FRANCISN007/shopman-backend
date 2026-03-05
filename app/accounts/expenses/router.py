@@ -18,6 +18,9 @@ from app.users.schemas import UserDisplaySchema
 router = APIRouter()
 
 
+router = APIRouter()
+
+
 @router.post("/", response_model=schemas.ExpenseOut, status_code=201)
 def create_expense(
     expense: schemas.ExpenseCreate,
@@ -46,6 +49,7 @@ def create_expense(
         )
 
     return created
+
 
 
 @router.get("/", response_model=schemas.ExpenseListResponse)
