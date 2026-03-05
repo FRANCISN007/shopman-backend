@@ -156,6 +156,7 @@ def create_purchase(db, purchase, current_user):
         "business_id": db_purchase.business_id,
         "purchase_date": db_purchase.purchase_date,
         "items": item_outputs,
+        "total_cost": total_invoice_cost,  # ✅ REQUIRED
         "created_at": getattr(db_purchase, "created_at", datetime.now(ZoneInfo("Africa/Lagos")))
     }
 
