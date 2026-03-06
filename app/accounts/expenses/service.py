@@ -110,16 +110,22 @@ def create_expense(
 
     # 1️⃣ Determine target business
     if "super_admin" in current_user.roles:
-        # Super admin: derive business from vendor
         vendor = db.query(vendor_models.Vendor).filter(
             vendor_models.Vendor.id == expense.vendor_id
         ).first()
+
         if not vendor:
-            raise HTTPException(404, "Vendor not found")
+            raise HTTPException(status_code=404, detail="Vendor not found")
+
         target_business_id = vendor.business_id
+
     else:
         if not current_user.business_id:
-            raise HTTPException(403, "User does not belong to any business")
+            raise HTTPException(
+                status_code=403,
+                detail="User does not belong to any business"
+            )
+
         target_business_id = current_user.business_id
 
     # 2️⃣ Validate vendor belongs to business
@@ -127,48 +133,61 @@ def create_expense(
         vendor_models.Vendor.id == expense.vendor_id,
         vendor_models.Vendor.business_id == target_business_id
     ).first()
+
     if not vendor:
         raise HTTPException(
-            404,
-            f"Vendor {expense.vendor_id} not found or does not belong to this business"
+            status_code=404,
+            detail=f"Vendor {expense.vendor_id} not found or does not belong to this business"
         )
 
-    # 3️⃣ Validate payment method & bank rules
+    # 3️⃣ Validate payment method rules
     method = expense.payment_method.lower()
-    if method == "cash" and expense.bank_id is not None:
-        raise HTTPException(400, "Bank must NOT be selected for cash payments")
-    if method in ["transfer", "pos"] and not expense.bank_id:
-        raise HTTPException(400, f"Bank is required for {method} payments")
 
-    # Validate bank belongs to same business
+    if method == "cash" and expense.bank_id is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="Bank must NOT be selected for cash payments"
+        )
+
+    if method in ["transfer", "pos"] and not expense.bank_id:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Bank is required for {method} payments"
+        )
+
+    # 4️⃣ Validate bank belongs to same business
     bank_name = None
+
     if expense.bank_id:
         bank = db.query(bank_models.Bank).filter(
             bank_models.Bank.id == expense.bank_id,
             bank_models.Bank.business_id == target_business_id
         ).first()
+
         if not bank:
             raise HTTPException(
-                404,
-                f"Bank {expense.bank_id} not found or does not belong to this business"
+                status_code=404,
+                detail=f"Bank {expense.bank_id} not found or does not belong to this business"
             )
+
         bank_name = bank.name
 
-    # 4️⃣ Check for duplicate ref_no within the same business only
+    # 5️⃣ Check duplicate ref_no within SAME business only
     existing_expense = db.query(models.Expense).filter(
         models.Expense.business_id == target_business_id,
         models.Expense.ref_no == expense.ref_no
     ).first()
+
     if existing_expense:
         raise HTTPException(
             status_code=400,
             detail=f"Reference number '{expense.ref_no}' already exists for this business."
         )
 
-    # 5️⃣ Determine initial status
+    # 6️⃣ Determine status
     initial_status = "paid" if method in ["cash", "pos", "transfer"] else "pending"
 
-    # 6️⃣ Create new expense record
+    # 7️⃣ Create expense
     new_expense = models.Expense(
         business_id=target_business_id,
         vendor_id=expense.vendor_id,
@@ -189,21 +208,29 @@ def create_expense(
     try:
         db.commit()
         db.refresh(new_expense, attribute_names=["vendor", "bank", "creator"])
+
     except IntegrityError as e:
         db.rollback()
-        # Detect duplicate reference number for the same business
-        if hasattr(e.orig, "diag") and getattr(e.orig.diag, "constraint_name", None) == "uq_expense_business_ref":
+
+        error_text = str(e.orig)
+
+        # Detect duplicate constraint
+        if (
+            "uq_expense_business_ref" in error_text
+            or "duplicate key value violates unique constraint" in error_text
+        ):
             raise HTTPException(
                 status_code=400,
                 detail=f"Reference number '{expense.ref_no}' already exists for this business."
             )
-        # Fallback
+
+        # Send real DB error to frontend
         raise HTTPException(
             status_code=400,
-            detail=str(e.orig)  # <-- show the actual DB error
+            detail=error_text
         )
 
-    # 7️⃣ Return enriched response
+    # 8️⃣ Return response
     return schemas.ExpenseOut(
         id=new_expense.id,
         business_id=new_expense.business_id,
