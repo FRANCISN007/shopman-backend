@@ -4,9 +4,8 @@ from dotenv import load_dotenv
 from typing import Optional
 
 from sqlalchemy import create_engine, event
-from sqlalchemy.orm import sessionmaker, declarative_base
-from sqlalchemy.orm import Session as SessionType
-from sqlalchemy.orm import with_loader_criteria
+from sqlalchemy.orm import sessionmaker, declarative_base, Session as SessionType, with_loader_criteria
+from contextvars import ContextVar
 
 # ============================================================
 # 🔐 Load environment variables
@@ -24,17 +23,23 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
 if not SQLALCHEMY_DATABASE_URL:
     raise ValueError("❌ DB_URL2 environment variable is not set!")
 
-print(f"🔍 Using database: {SQLALCHEMY_DATABASE_URL.split('@')[-1]}")
+print(f"🔍 Using database host: {SQLALCHEMY_DATABASE_URL.split('@')[-1]}")
 
 # ============================================================
-# ⚙️ SQLAlchemy setup
+# ⚙️ SQLAlchemy Engine with Connection Pooling
 # ============================================================
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,
-    pool_pre_ping=True,
-    future=True,  # Use 2.0 style
+    future=True,         # SQLAlchemy 2.0 style
+    pool_size=20,        # Persistent connections
+    max_overflow=40,     # Extra connections beyond pool
+    pool_pre_ping=True,  # Test connection before use
+    pool_recycle=1800,   # Recycle connections every 30 mins
 )
 
+# ============================================================
+# ⚙️ SessionLocal for FastAPI
+# ============================================================
 SessionLocal = sessionmaker(
     autocommit=False,
     autoflush=False,
@@ -47,16 +52,12 @@ Base = declarative_base()
 # ============================================================
 # 🏢 Tenant context
 # ============================================================
-from contextvars import ContextVar
-
 _current_business_id: ContextVar[Optional[int]] = ContextVar(
     "current_business_id", default=None
 )
 
-
 def set_current_business(business_id: Optional[int]):
     _current_business_id.set(business_id)
-
 
 def get_current_business() -> Optional[int]:
     return _current_business_id.get()
@@ -70,11 +71,9 @@ def _add_tenant_filter(execute_state):
     Apply tenant isolation ONLY when a business_id exists.
     Super admin (business_id=None) bypasses filtering.
     """
-
     business_id = get_current_business()
 
-    # 🔴 IMPORTANT: super admin bypass
-    if business_id is None:
+    if business_id is None:  # Super admin bypass
         return
 
     if not execute_state.is_select:
@@ -96,7 +95,6 @@ def _add_tenant_filter(execute_state):
                 include_aliases=True,
             )
         )
-
 
 # ============================================================
 # 🔄 FastAPI dependency
