@@ -41,9 +41,10 @@ def restore_database(file: UploadFile = File(...)):
             "-h", db_host,
             "-p", db_port,
             "-d", db_name,
+            "--clean",
+            "--if-exists",
             "--no-owner",
             "--no-privileges",
-            "--data-only",
             "-v",
             filepath
         ]
@@ -58,16 +59,17 @@ def restore_database(file: UploadFile = File(...)):
             text=True
         )
 
-        # Allow warnings
         if result.returncode not in (0, 1):
             raise HTTPException(
                 status_code=500,
-                detail=f"pg_restore failed:\n{result.stderr}"
+                detail="Database restore failed."
             )
 
+        # delete backup file after restore
+        os.remove(filepath)
+
         return {
-            "detail": f"Database '{db_name}' restored successfully from {file.filename}",
-            "warning": result.stderr if result.returncode == 1 else None
+            "detail": f"Database '{db_name}' restored successfully from {file.filename}"
         }
 
     except Exception as e:
