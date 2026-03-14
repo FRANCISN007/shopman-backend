@@ -14,7 +14,12 @@ class Category(Base):
     description = Column(String(255), nullable=True)
 
     #created_at = Column(DateTime(timezone=True), server_default=func.now())
-    created_at = datetime.now(ZoneInfo("Africa/Lagos"))
+    created_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(ZoneInfo("Africa/Lagos")),
+        nullable=False
+    )
+
     # 🔒 Tenant ownership
     business_id = Column(Integer, ForeignKey("businesses.id"), nullable=False, index=True)
 

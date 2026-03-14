@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, Integer, String, ForeignKey, UniqueConstraint, Index
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -17,9 +17,10 @@ class Bank(Base):
         index=True,
     )
 
-    # 🔒 Ensure uniqueness per business ONLY
+    # 🔒 Ensure uniqueness per business
     __table_args__ = (
         UniqueConstraint("name", "business_id", name="uix_bank_name_business"),
+        Index("idx_bank_business_name", "business_id", "name"),  # For faster queries by business
     )
 
     business = relationship("Business", back_populates="banks")

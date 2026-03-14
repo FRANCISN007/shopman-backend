@@ -1,9 +1,8 @@
-from sqlalchemy import Column, Integer, Float, ForeignKey, DateTime
+from sqlalchemy import Column, Integer, Float, ForeignKey, DateTime, Index
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from app.database import Base
-
 
 LAGOS_TZ = ZoneInfo("Africa/Lagos")
 
@@ -25,10 +24,6 @@ class Inventory(Base):
     adjustment_total = Column(Float, default=0)
     current_stock = Column(Float, default=0)
 
-    #created_at = Column(DateTime, default=datetime.utcnow)
-    #updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    # 🔹 Correct timezone-aware DateTime columns
     created_at = Column(
         DateTime(timezone=True),
         default=lambda: datetime.now(LAGOS_TZ),
@@ -39,4 +34,10 @@ class Inventory(Base):
         default=lambda: datetime.now(LAGOS_TZ),
         onupdate=lambda: datetime.now(LAGOS_TZ),
         nullable=False
+    )
+
+    __table_args__ = (
+        Index("idx_inventory_business_product", "business_id", "product_id"),
+        Index("idx_inventory_business_created", "business_id", "created_at"),
+        Index("idx_inventory_business_updated", "business_id", "updated_at"),
     )

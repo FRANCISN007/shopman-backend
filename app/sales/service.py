@@ -5,6 +5,7 @@ from typing import Optional, List
 from datetime import datetime, time
 from datetime import date
 from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import selectinload
 from sqlalchemy import and_
 from sqlalchemy.exc import IntegrityError
 from app.users import models as users_models
@@ -588,33 +589,37 @@ def list_sales(
     end_date: Optional[date] = None,
     business_id: Optional[int] = None,
 ) -> schemas.SalesListResponse:
-    """
-    Tenant-aware sales listing with timezone-aware filtering.
-    Enforces business isolation except for super_admin.
-    """
 
-    # ─── 1. Build base query with eager loading ───────────────────────
+    # ─── Base Query ──────────────────────────────────
     query = (
-        db.query(models.Sale)  # full model
+        db.query(models.Sale)
         .options(
-            joinedload(models.Sale.items).joinedload(models.SaleItem.product),
-            joinedload(models.Sale.payments),
+            selectinload(models.Sale.items).selectinload(models.SaleItem.product),
+            selectinload(models.Sale.payments),
         )
     )
 
-    # ─── 2. Apply tenant isolation ────────────────────────────────────
+    # ─── Tenant Isolation ────────────────────────────
     if "super_admin" in current_user.roles:
-        if business_id is not None:
-            query = query.filter(models.Sale.business_id == business_id)
+
+        if business_id is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Super admin must specify business_id"
+            )
+
+        query = query.filter(models.Sale.business_id == business_id)
+
     else:
         if not current_user.business_id:
             raise HTTPException(
                 status_code=403,
-                detail="Current user does not belong to any business"
+                detail="User does not belong to any business"
             )
+
         query = query.filter(models.Sale.business_id == current_user.business_id)
 
-    # ─── 3. Date filters (timezone-aware) ─────────────────────────────
+    # ─── Date Filters ────────────────────────────────
     if start_date:
         start_datetime = datetime.combine(start_date, time.min, tzinfo=LAGOS_TZ)
         query = query.filter(models.Sale.sold_at >= start_datetime)
@@ -623,20 +628,25 @@ def list_sales(
         end_datetime = datetime.combine(end_date, time.max, tzinfo=LAGOS_TZ)
         query = query.filter(models.Sale.sold_at <= end_datetime)
 
-    # ─── 4. Pagination only (no ordering) ────────────────────────────
+    # ─── Order + Pagination ──────────────────────────
+    query = query.order_by(models.Sale.sold_at.desc())
+
     sales = query.offset(skip).limit(limit).all()
 
-    # ─── 5. Build enriched response ───────────────────────────────────
+    # ─── Build Response ──────────────────────────────
     sales_list: List[schemas.SaleOut2] = []
+
     total_sales_amount = 0.0
     total_paid_sum = 0.0
     total_balance_sum = 0.0
 
     for sale in sales:
-        total_amount = float(sale.total_amount or 0.0)
+
+        total_amount = float(sale.total_amount or 0)
 
         payments = sale.payments or []
         total_paid = sum(float(p.amount_paid or 0) for p in payments)
+
         balance_due = total_amount - total_paid
 
         if total_paid == 0:
@@ -682,7 +692,7 @@ def list_sales(
         total_paid_sum += total_paid
         total_balance_sum += balance_due
 
-    # ─── 6. Summary ───────────────────────────────────────────────────
+    # ─── Summary ─────────────────────────────────────
     summary = schemas.SaleSummary(
         total_sales=total_sales_amount,
         total_paid=total_paid_sum,
