@@ -14,9 +14,19 @@ from app.database import get_db
 from app.business import models, schemas
 from app.users.permissions import role_required
 
+
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+
+
+
 router = APIRouter()
 
 
+LAGOS_TZ = ZoneInfo("Africa/Lagos")
+
+now_lagos = datetime.now(LAGOS_TZ)
 # -------------------------------
 # CREATE BUSINESS - ONLY SUPER ADMIN
 # -------------------------------
@@ -134,7 +144,8 @@ def list_businesses(
             )
 
             biz_out.license_active = (
-                latest_license.is_active and latest_license.expiration_date >= datetime.utcnow()
+                latest_license.is_active and latest_license.expiration_date >= now_lagos
+
             ) if latest_license else False
 
             biz_out.expiration_date = latest_license.expiration_date if latest_license else None
