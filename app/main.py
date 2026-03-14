@@ -26,6 +26,7 @@ from app.payments.router import router as payment_router
 
 
 from backup.backup import router as backup_router
+from backup.restore import router as restore_router  # <-- import restore router
 
 
 from app.core.tenant_middleware import TenantMiddleware
@@ -147,6 +148,7 @@ app.include_router(profit_loss_router, prefix="/accounts/profit_loss", tags=["Ac
 
 
 app.include_router(backup_router)
+app.include_router(restore_router, prefix="/backup", tags=["Restore"])  
 
 
 
