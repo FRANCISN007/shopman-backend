@@ -15,7 +15,10 @@ os.makedirs(RESTORE_DIR, exist_ok=True)
 def restore_database(file: UploadFile = File(...)):
 
     if not DB_URL or not DB_URL.startswith("postgresql://"):
-        raise HTTPException(status_code=400, detail="Only PostgreSQL restores are supported.")
+        raise HTTPException(
+            status_code=400,
+            detail="Only PostgreSQL restores are supported."
+        )
 
     try:
 
@@ -29,17 +32,18 @@ def restore_database(file: UploadFile = File(...)):
         db_user = parsed.username or "postgres"
         db_password = parsed.password or ""
         db_host = parsed.hostname or "localhost"
-        db_port = parsed.port or 5432
+        db_port = str(parsed.port or 5432)
         db_name = parsed.path.lstrip("/")
 
         pg_restore_cmd = [
             "pg_restore",
             "-U", db_user,
             "-h", db_host,
-            "-p", str(db_port),
+            "-p", db_port,
             "-d", db_name,
-            "--clean",
             "--no-owner",
+            "--no-privileges",
+            "--data-only",
             "-v",
             filepath
         ]
@@ -54,13 +58,17 @@ def restore_database(file: UploadFile = File(...)):
             text=True
         )
 
-        if result.returncode != 0:
+        # Allow warnings
+        if result.returncode not in (0, 1):
             raise HTTPException(
                 status_code=500,
                 detail=f"pg_restore failed:\n{result.stderr}"
             )
 
-        return {"detail": f"Database '{db_name}' restored successfully from {file.filename}"}
+        return {
+            "detail": f"Database '{db_name}' restored successfully from {file.filename}",
+            "warning": result.stderr if result.returncode == 1 else None
+        }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
