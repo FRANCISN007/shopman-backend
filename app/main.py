@@ -31,9 +31,9 @@ from backup.restore import router as restore_router  # <-- import restore router
 
 from app.core.tenant_middleware import TenantMiddleware
 
-app = FastAPI()
 
-app.add_middleware(TenantMiddleware)
+
+
 
 
 
@@ -100,6 +100,7 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+app.add_middleware(TenantMiddleware)
 
 origins = [
     "http://localhost:3000",
@@ -107,14 +108,14 @@ origins = [
     "https://shopman-frontend.onrender.com"
 ]
 
-# CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # For production, change to specific domains
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 app.mount("/files", StaticFiles(directory="uploads"), name="files")
 

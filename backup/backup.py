@@ -5,8 +5,8 @@ import subprocess
 from urllib.parse import urlparse
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
-from apscheduler.schedulers.background import BackgroundScheduler
 
+# your auth dependency
 from app.users.permissions import role_required
 
 load_dotenv()
@@ -18,11 +18,11 @@ DB_URL = os.getenv("DB_URL2")
 BACKUP_DIR = os.path.join(os.getcwd(), "backup_files")
 os.makedirs(BACKUP_DIR, exist_ok=True)
 
+# Optional: specify pg_dump path for Windows
 PG_DUMP_PATH = os.getenv("PG_DUMP_PATH", "pg_dump")
 
 
-# ----------- cleanup old backups -----------
-
+# ----------- Optional cleanup (keep last 7 days) -----------
 def cleanup_old_backups(days: int = 7):
     now = datetime.now()
 
@@ -39,16 +39,28 @@ def cleanup_old_backups(days: int = 7):
                     pass
 
 
-# ----------- actual backup function -----------
+# ----------- Backup Endpoint -----------
 
-def run_auto_backup():
+@router.get("/db")
+def backup_database(
+    format: str = "custom",
+    current_user=Depends(role_required(["super_admin"]))
+):
+    """
+    Creates a PostgreSQL database backup.
+
+    format:
+        custom  -> .backup (recommended)
+        plain   -> .sql
+    """
 
     if not DB_URL or not DB_URL.startswith("postgresql://"):
-        print("Backup skipped: invalid DB_URL")
-        return
+        raise HTTPException(
+            status_code=400,
+            detail="Only PostgreSQL databases are supported"
+        )
 
     try:
-
         parsed = urlparse(DB_URL)
 
         db_user = parsed.username
@@ -57,17 +69,28 @@ def run_auto_backup():
         db_port = parsed.port or 5432
         db_name = parsed.path.lstrip("/")
 
+        # ----------- Backup format -----------
+        if format == "plain":
+            file_ext = ".sql"
+            pg_format = "p"
+        else:
+            file_ext = ".backup"
+            pg_format = "c"
+
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-        filename = f"{db_name}_backup_{timestamp}.backup"
+        filename = f"{db_name}_backup_{timestamp}{file_ext}"
+
         filepath = os.path.join(BACKUP_DIR, filename)
+
+        # ----------- pg_dump command -----------
 
         pg_dump_cmd = [
             PG_DUMP_PATH,
             "-h", db_host,
             "-p", str(db_port),
             "-U", db_user,
-            "-F", "c",
+            "-F", pg_format,
             "-f", filepath,
             db_name
         ]
@@ -77,48 +100,26 @@ def run_auto_backup():
 
         subprocess.run(pg_dump_cmd, env=env, check=True)
 
+        # clean old backups
         cleanup_old_backups()
 
-        print(f"Backup created: {filename}")
+        return FileResponse(
+            path=filepath,
+            filename=filename,
+            media_type="application/octet-stream"
+        )
+
+    except subprocess.CalledProcessError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"pg_dump failed: {str(e)}"
+        )
 
     except Exception as e:
-        print(f"Backup failed: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Backup error: {str(e)}"
+        )
 
 
-# ----------- scheduler -----------
 
-scheduler = BackgroundScheduler()
-
-# run every midnight
-scheduler.add_job(run_auto_backup, "cron", hour=0, minute=0)
-
-scheduler.start()
-
-
-# ----------- manual backup endpoint -----------
-
-@router.get("/db")
-def backup_database(
-    format: str = "custom",
-    current_user=Depends(role_required(["super_admin"]))
-):
-
-    run_auto_backup()
-
-    # get newest backup file
-    files = sorted(
-        [os.path.join(BACKUP_DIR, f) for f in os.listdir(BACKUP_DIR)],
-        key=os.path.getmtime,
-        reverse=True
-    )
-
-    if not files:
-        raise HTTPException(status_code=500, detail="Backup failed")
-
-    filepath = files[0]
-
-    return FileResponse(
-        path=filepath,
-        filename=os.path.basename(filepath),
-        media_type="application/octet-stream"
-    )
