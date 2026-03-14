@@ -100,6 +100,13 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+
+origins = [
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "https://shopman-frontend.onrender.com"
+]
+
 # CORS
 app.add_middleware(
     CORSMiddleware,
