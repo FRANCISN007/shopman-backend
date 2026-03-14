@@ -16,9 +16,17 @@ import os
 from loguru import logger
 import os
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+
+
+
 router = APIRouter()
 
 
+LAGOS_TZ = ZoneInfo("Africa/Lagos")
+now_lagos = datetime.now(LAGOS_TZ)
 
 ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD')
 
@@ -151,8 +159,8 @@ def login(
         if not license_key:
             raise HTTPException(status_code=403, detail="No active license for this business")
 
-        from datetime import datetime
-        if license_key.expiration_date < datetime.utcnow():
+        if license_key.expiration_date < now_lagos:
+
             raise HTTPException(status_code=403, detail="Business license expired")
 
         business_id = business.id
