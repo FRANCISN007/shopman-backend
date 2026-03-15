@@ -403,35 +403,24 @@ def update_product_price(
     db: Session,
     product_id: int,
     price_update: ProductPriceUpdate,
-    current_user,
-    business_id: Optional[int] = None
+    current_user
 ):
-    query = db.query(models.Product).options(
-        joinedload(models.Product.category)
-    ).filter(models.Product.id == product_id)
+    query = db.query(models.Product).options(joinedload(models.Product.category)).filter(
+        models.Product.id == product_id
+    )
 
-    # ---------------- Determine Tenant ----------------
-    if "super_admin" in current_user.roles:
-
-        if not business_id:
-            raise HTTPException(
-                status_code=400,
-                detail="Super admin must provide business_id"
-            )
-
-        query = query.filter(models.Product.business_id == business_id)
-
-    else:
-        query = query.filter(
-            models.Product.business_id == current_user.business_id
-        )
+    # 🔐 Tenant isolation
+    if "super_admin" not in current_user.roles:
+        query = query.filter(models.Product.business_id == current_user.business_id)
 
     product = query.first()
 
     if not product:
         return None
 
-    # ---------------- Validate price ----------------
+    # -----------------------
+    # Validate price
+    # -----------------------
     if price_update.selling_price < 0:
         raise HTTPException(
             status_code=400,
@@ -475,133 +464,51 @@ def clean_price(value):
         return 0.0
 
 
-def import_products_from_excel(
+def update_product_price(
     db: Session,
-    file: UploadFile,
+    product_id: int,
+    price_update: ProductPriceUpdate,
     current_user,
-    business_id: Optional[int] = None,
+    business_id: Optional[int] = None
 ):
-    try:
-        # ------------------- Determine target business -------------------
-        if "super_admin" in current_user.roles:
-            if not business_id:
-                raise HTTPException(400, detail="Super admin must provide business_id")
-            target_business_id = business_id
-        else:
-            target_business_id = current_user.business_id
-            if not target_business_id:
-                raise HTTPException(403, detail="User is not associated with any business")
+    query = db.query(models.Product).options(
+        joinedload(models.Product.category)
+    ).filter(models.Product.id == product_id)
 
-        # ------------------- Validate Excel file -------------------
-        if not file.filename.lower().endswith((".xlsx", ".xls")):
-            raise HTTPException(400, detail="Only .xlsx and .xls files are supported")
+    # ---------------- Determine Tenant ----------------
+    if "super_admin" in current_user.roles:
 
-        df = pd.read_excel(file.file)
-        df.columns = [str(c).strip().lower() for c in df.columns]
-
-        required = {"name", "category", "cost_price", "selling_price"}
-        if not required.issubset(df.columns):
-            missing = required - set(df.columns)
-            raise HTTPException(400, detail=f"Missing required columns: {', '.join(missing)}")
-
-        # ------------------- Helper: normalize strings -------------------
-        def normalize(s: str) -> str:
-            return " ".join(str(s).lower().strip().split())
-
-        # ------------------- Load business categories -------------------
-        categories = {
-            normalize(c.name): c.id
-            for c in db.query(Category)
-            .filter(Category.business_id == target_business_id)
-            .all()
-        }
-
-        if not categories:
-            raise HTTPException(400, detail="This business has no categories defined")
-
-        # ------------------- Cache existing products -------------------
-        existing = {
-            (p.name.strip().lower(), p.category_id)
-            for p in db.query(Product.name, Product.category_id)
-            .filter(Product.business_id == target_business_id)
-            .all()
-        }
-
-        products_to_add = []
-        stats = {
-            "skipped": 0,
-            "duplicates": 0,
-            "invalid": 0,
-            "unknown_category": 0,
-        }
-
-        for _, row in df.iterrows():
-            name_val = row.get("name")
-            cat_val = row.get("category")
-
-            if pd.isna(name_val) or pd.isna(cat_val) or not str(name_val).strip() or not str(cat_val).strip():
-                stats["invalid"] += 1
-                stats["skipped"] += 1
-                continue
-
-            name = str(name_val).strip()
-            cat_key = normalize(cat_val)
-
-            if cat_key not in categories:
-                stats["unknown_category"] += 1
-                stats["skipped"] += 1
-                continue
-
-            cat_id = categories[cat_key]
-            key = (name.lower(), cat_id)
-
-            if key in existing:
-                stats["duplicates"] += 1
-                stats["skipped"] += 1
-                continue
-
-            # ------------------- Create product -------------------
-            product = Product(
-                name=name,
-                category_id=cat_id,
-                type=str(row["type"]).strip() if not pd.isna(row.get("type")) else None,
-                cost_price=clean_price(row["cost_price"]),
-                selling_price=clean_price(row["selling_price"]),
-                business_id=target_business_id,
+        if not business_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Super admin must provide business_id"
             )
 
-            products_to_add.append(product)
-            existing.add(key)  # prevent duplicates in the same import
+        query = query.filter(models.Product.business_id == business_id)
 
-        # ------------------- Handle no new products -------------------
-        if not products_to_add:
-            detail = {
-                "message": "No new products were imported",
-                "reason": "All rows were either duplicates, missing required fields, or had unrecognized categories.",
-                "total_rows": len(df),
-                **stats,
-            }
-            raise HTTPException(status_code=409, detail=detail)
+    else:
+        query = query.filter(
+            models.Product.business_id == current_user.business_id
+        )
 
-        # ------------------- Save to DB -------------------
-        db.add_all(products_to_add)
-        db.commit()
+    product = query.first()
 
-        return {
-            "message": "Import completed successfully",
-            "imported": len(products_to_add),
-            "skipped": stats["skipped"],
-            "duplicates": stats["duplicates"],
-            "invalid_rows": stats["invalid"],
-            "unknown_categories": stats["unknown_category"],
-            "total_rows": len(df),
-        }
+    if not product:
+        return None
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(500, detail=f"Import failed: {str(e)}")
+    # ---------------- Validate price ----------------
+    if price_update.selling_price < 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Selling price cannot be negative."
+        )
+
+    product.selling_price = price_update.selling_price
+
+    db.commit()
+    db.refresh(product)
+
+    return product
         
             
 
@@ -609,14 +516,29 @@ def update_product_status(
     db: Session,
     product_id: int,
     is_active: bool,
-    current_user
+    current_user,
+    business_id: Optional[int] = None
 ):
-    query = db.query(Product).filter(Product.id == product_id)
 
-    # 🔐 Tenant isolation
-    if "super_admin" not in current_user.roles:
+    query = db.query(models.Product).options(
+        joinedload(models.Product.category)
+    ).filter(models.Product.id == product_id)
+
+    # -------- Determine tenant --------
+    if "super_admin" in current_user.roles:
+
+        if not business_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Super admin must provide business_id"
+            )
+
+        query = query.filter(models.Product.business_id == business_id)
+
+    else:
+
         query = query.filter(
-            Product.business_id == current_user.business_id
+            models.Product.business_id == current_user.business_id
         )
 
     product = query.first()
@@ -630,4 +552,3 @@ def update_product_status(
     db.refresh(product)
 
     return product
-

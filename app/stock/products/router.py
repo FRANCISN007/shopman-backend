@@ -307,6 +307,8 @@ def import_products_from_excel(
 
 
 
+
+
 @router.put(
     "/{product_id}/status",
     response_model=schemas.ProductOut
@@ -314,13 +316,18 @@ def import_products_from_excel(
 def update_product_status(
     product_id: int,
     payload: schemas.ProductStatusUpdate,
+    business_id: Optional[int] = Query(None, description="Super admin can specify business"),
     db: Session = Depends(get_db),
     current_user: UserDisplaySchema = Depends(
         role_required(["manager", "admin", "super_admin"])
     ),
 ):
     product = service.update_product_status(
-        db, product_id, payload.is_active, current_user
+        db,
+        product_id,
+        payload.is_active,
+        current_user,
+        business_id
     )
 
     if not product:
@@ -349,6 +356,7 @@ def update_product_status(
 )
 def deactivate_product(
     product_id: int,
+    business_id: Optional[int] = Query(None, description="Super admin can specify business"),
     db: Session = Depends(get_db),
     current_user: UserDisplaySchema = Depends(
         role_required(["manager", "admin", "super_admin"])
@@ -358,7 +366,8 @@ def deactivate_product(
         db=db,
         product_id=product_id,
         is_active=False,
-        current_user=current_user
+        current_user=current_user,
+        business_id=business_id
     )
 
     if not product:
@@ -381,12 +390,15 @@ def deactivate_product(
 
 
 
+
+
 @router.patch(
     "/{product_id}/activate",
     response_model=schemas.ProductOut
 )
 def activate_product(
     product_id: int,
+    business_id: Optional[int] = Query(None, description="Super admin can specify business"),
     db: Session = Depends(get_db),
     current_user: UserDisplaySchema = Depends(
         role_required(["manager", "admin", "super_admin"])
@@ -396,7 +408,8 @@ def activate_product(
         db=db,
         product_id=product_id,
         is_active=True,
-        current_user=current_user
+        current_user=current_user,
+        business_id=business_id
     )
 
     if not product:
