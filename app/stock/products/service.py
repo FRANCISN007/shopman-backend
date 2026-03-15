@@ -403,24 +403,35 @@ def update_product_price(
     db: Session,
     product_id: int,
     price_update: ProductPriceUpdate,
-    current_user
+    current_user,
+    business_id: Optional[int] = None
 ):
-    query = db.query(models.Product).options(joinedload(models.Product.category)).filter(
-        models.Product.id == product_id
-    )
+    query = db.query(models.Product).options(
+        joinedload(models.Product.category)
+    ).filter(models.Product.id == product_id)
 
-    # 🔐 Tenant isolation
-    if "super_admin" not in current_user.roles:
-        query = query.filter(models.Product.business_id == current_user.business_id)
+    # ---------------- Determine Tenant ----------------
+    if "super_admin" in current_user.roles:
+
+        if not business_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Super admin must provide business_id"
+            )
+
+        query = query.filter(models.Product.business_id == business_id)
+
+    else:
+        query = query.filter(
+            models.Product.business_id == current_user.business_id
+        )
 
     product = query.first()
 
     if not product:
         return None
 
-    # -----------------------
-    # Validate price
-    # -----------------------
+    # ---------------- Validate price ----------------
     if price_update.selling_price < 0:
         raise HTTPException(
             status_code=400,

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Query
 from sqlalchemy.orm import Session
 from typing import List
 import pandas as pd
@@ -246,13 +246,14 @@ def update_product(
 def update_product_price(
     product_id: int,
     price_update: schemas.ProductPriceUpdate,
+    business_id: Optional[int] = Query(None, description="Super admin can specify business"),
     db: Session = Depends(get_db),
     current_user: UserDisplaySchema = Depends(
         role_required(["manager", "admin", "super_admin"])
     )
 ):
     product = service.update_product_price(
-        db, product_id, price_update, current_user
+        db, product_id, price_update, current_user, business_id
     )
 
     if not product:
