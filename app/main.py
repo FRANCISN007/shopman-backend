@@ -105,7 +105,7 @@ app.add_middleware(TenantMiddleware)
 origins = [
     "http://localhost:3000",
     "http://localhost:5173",
-    "https://shopman-frontend.onrender.com"
+    "https://shopman-businessapp.onrender.com"
 ]
 
 app.add_middleware(
