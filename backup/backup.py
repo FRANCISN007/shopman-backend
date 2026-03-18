@@ -42,47 +42,42 @@ def cleanup_old_backups(days: int = 7):
 # ----------- actual backup function -----------
 
 def run_auto_backup():
-
     if not DB_URL or not DB_URL.startswith("postgresql://"):
-        print("Backup skipped: invalid DB_URL")
-        return
+        raise Exception("Invalid DB_URL")
 
-    try:
+    parsed = urlparse(DB_URL)
 
-        parsed = urlparse(DB_URL)
+    db_user = parsed.username
+    db_password = parsed.password
+    db_host = parsed.hostname or "localhost"
+    db_port = parsed.port or 5432
+    db_name = parsed.path.lstrip("/")
 
-        db_user = parsed.username
-        db_password = parsed.password
-        db_host = parsed.hostname or "localhost"
-        db_port = parsed.port or 5432
-        db_name = parsed.path.lstrip("/")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"{db_name}_backup_{timestamp}.backup"
+    filepath = os.path.join(BACKUP_DIR, filename)
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    pg_dump_cmd = [
+        PG_DUMP_PATH,
+        "-h", db_host,
+        "-p", str(db_port),
+        "-U", db_user,
+        "-F", "c",
+        "-f", filepath,
+        db_name
+    ]
 
-        filename = f"{db_name}_backup_{timestamp}.backup"
-        filepath = os.path.join(BACKUP_DIR, filename)
+    env = os.environ.copy()
+    env["PGPASSWORD"] = db_password
 
-        pg_dump_cmd = [
-            PG_DUMP_PATH,
-            "-h", db_host,
-            "-p", str(db_port),
-            "-U", db_user,
-            "-F", "c",
-            "-f", filepath,
-            db_name
-        ]
+    result = subprocess.run(pg_dump_cmd, env=env, capture_output=True, text=True)
 
-        env = os.environ.copy()
-        env["PGPASSWORD"] = db_password
+    if result.returncode != 0:
+        raise Exception(result.stderr)
 
-        subprocess.run(pg_dump_cmd, env=env, check=True)
+    cleanup_old_backups()
 
-        cleanup_old_backups()
-
-        print(f"Backup created: {filename}")
-
-    except Exception as e:
-        print(f"Backup failed: {str(e)}")
+    return filepath
 
 
 # ----------- scheduler -----------
@@ -102,23 +97,15 @@ def backup_database(
     format: str = "custom",
     current_user=Depends(role_required(["super_admin"]))
 ):
+    try:
+        filepath = run_auto_backup()
 
-    run_auto_backup()
+        return FileResponse(
+            path=filepath,
+            filename=os.path.basename(filepath),
+            media_type="application/octet-stream"
+        )
 
-    # get newest backup file
-    files = sorted(
-        [os.path.join(BACKUP_DIR, f) for f in os.listdir(BACKUP_DIR)],
-        key=os.path.getmtime,
-        reverse=True
-    )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-    if not files:
-        raise HTTPException(status_code=500, detail="Backup failed")
-
-    filepath = files[0]
-
-    return FileResponse(
-        path=filepath,
-        filename=os.path.basename(filepath),
-        media_type="application/octet-stream"
-    )
