@@ -17,11 +17,11 @@ if not env_path.exists():
 load_dotenv(dotenv_path=env_path)
 print(f"🔄 Loaded environment from: {env_path}")
 
-SQLALCHEMY_DATABASE_URL = os.getenv("DB_URL2")
+SQLALCHEMY_DATABASE_URL = os.getenv("DB_URL3")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
 
 if not SQLALCHEMY_DATABASE_URL:
-    raise ValueError("❌ DB_URL2 environment variable is not set!")
+    raise ValueError("❌ DB_URL3 environment variable is not set!")
 
 print(f"🔍 Using database host: {SQLALCHEMY_DATABASE_URL.split('@')[-1]}")
 
