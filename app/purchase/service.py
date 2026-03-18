@@ -69,10 +69,33 @@ def create_purchase(db, purchase, current_user):
         # -------------------- 2️⃣ Process Each Item --------------------
         for item in purchase.items:
             # Validate product
-            product = db.query(product_models.Product).filter(
-                product_models.Product.id == item.product_id,
-                product_models.Product.business_id == business_id
-            ).first()
+            # -------------------- Resolve Product (ID / Barcode / SKU) --------------------
+            product = None
+
+            if item.product_id:
+                product = db.query(product_models.Product).filter(
+                    product_models.Product.id == item.product_id,
+                    product_models.Product.business_id == business_id
+                ).first()
+
+            elif item.barcode:
+                product = db.query(product_models.Product).filter(
+                    product_models.Product.barcode == item.barcode,
+                    product_models.Product.business_id == business_id
+                ).first()
+
+            elif item.sku:
+                product = db.query(product_models.Product).filter(
+                    product_models.Product.sku == item.sku,
+                    product_models.Product.business_id == business_id
+                ).first()
+
+            if not product:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Product not found (id/barcode/sku)"
+                )
+
             if not product:
                 raise HTTPException(
                     status_code=404,
@@ -86,7 +109,7 @@ def create_purchase(db, purchase, current_user):
             # Create PurchaseItem row
             db_item = purchase_models.PurchaseItem(
                 purchase_id=db_purchase.id,
-                product_id=item.product_id,
+                product_id=product.id,
                 quantity=item.quantity,
                 cost_price=item.cost_price,
                 total_cost=item_total
@@ -98,7 +121,7 @@ def create_purchase(db, purchase, current_user):
             # Update inventory
             inventory_service.add_stock(
                 db=db,
-                product_id=item.product_id,
+                product_id=product.id,
                 quantity=item.quantity,
                 current_user=current_user,
                 commit=False
@@ -120,6 +143,8 @@ def create_purchase(db, purchase, current_user):
                 "id": db_item.id,
                 "product_id": product.id,
                 "product_name": product.name,
+                "barcode": product.barcode,   # ✅ ADD THIS
+                "sku": product.sku,  
                 "quantity": item.quantity,
                 "cost_price": item.cost_price,
                 "total_cost": item_total,
@@ -176,12 +201,17 @@ def list_purchases(
     end_date: Optional[str] = None,
     business_id: Optional[int] = None,
 ):
-    query = db.query(purchase_models.Purchase)
+    # -------------------- BASE QUERY --------------------
+    query = db.query(purchase_models.Purchase).options(
+        joinedload(purchase_models.Purchase.items)
+        .joinedload(purchase_models.PurchaseItem.product),   # ✅ preload product (barcode, sku)
+        joinedload(purchase_models.Purchase.vendor)
+    )
 
-    # 🔐 Tenant Isolation
-    if "admin" in current_user.roles or \
-       "manager" in current_user.roles or \
-       "user" in current_user.roles:
+    # -------------------- TENANT ISOLATION --------------------
+    roles = set(current_user.roles)
+
+    if roles.intersection({"admin", "manager", "user"}):
         query = query.filter(
             purchase_models.Purchase.business_id == current_user.business_id
         )
@@ -190,10 +220,10 @@ def list_purchases(
             purchase_models.Purchase.business_id == business_id
         )
 
-    # Filters
+    # -------------------- FILTERS --------------------
     if invoice_no:
         query = query.filter(
-            purchase_models.Purchase.invoice_no.ilike(f"%{invoice_no}%")
+            purchase_models.Purchase.invoice_no.ilike(f"%{invoice_no.strip()}%")
         )
 
     if vendor_id:
@@ -213,21 +243,22 @@ def list_purchases(
             purchase_models.Purchase.purchase_date < end_dt
         )
 
+    # -------------------- PRODUCT FILTER --------------------
     if product_id:
         query = query.join(
             purchase_models.Purchase.items
         ).filter(
             purchase_models.PurchaseItem.product_id == product_id
-        )
+        ).distinct()  # ✅ prevents duplicate purchases
 
-    # 🔥 Calculate Gross Total BEFORE pagination
+    # -------------------- GROSS TOTAL --------------------
     gross_total = (
         query.with_entities(
             func.coalesce(func.sum(purchase_models.Purchase.total_cost), 0)
         ).scalar()
     )
 
-    # 📦 Get paginated records
+    # -------------------- PAGINATION --------------------
     purchases = (
         query
         .order_by(purchase_models.Purchase.purchase_date.desc())
@@ -299,21 +330,25 @@ def get_purchase(db: Session, purchase_id: int, current_user):
 
 
 
+# -------------------- SERVICE --------------------
 def update_purchase(db, purchase_id, update_data, current_user):
     """
-    Update a purchase invoice with multiple items.
+    Update a purchase invoice with multiple items and return structured response
+    including barcode and SKU.
     """
-    # -------------------- 1️⃣ Fetch Purchase --------------------
+    # 1️⃣ Fetch Purchase
     query = db.query(purchase_models.Purchase)
     if "super_admin" not in current_user.roles:
         query = query.filter(purchase_models.Purchase.business_id == current_user.business_id)
+
     purchase = query.filter(purchase_models.Purchase.id == purchase_id).first()
     if not purchase:
         return None
 
     vendor_name = purchase.vendor.business_name if purchase.vendor else None
+    total_invoice_cost = 0
 
-    # -------------------- 2️⃣ Update Purchase Header --------------------
+    # 2️⃣ Update Purchase Header
     if update_data.invoice_no is not None:
         purchase.invoice_no = update_data.invoice_no
 
@@ -327,21 +362,20 @@ def update_purchase(db, purchase_id, update_data, current_user):
         purchase.vendor_id = update_data.vendor_id
         vendor_name = vendor.business_name
 
-    total_invoice_cost = 0
-
-    # -------------------- 3️⃣ Update Items --------------------
+    # 3️⃣ Update Purchase Items
     if update_data.items:
         for item_update in update_data.items:
+            # Fetch existing item if it exists
+            item = None
             if item_update.id:
-                # Existing item → fetch
                 item = db.query(purchase_models.PurchaseItem).filter(
                     purchase_models.PurchaseItem.id == item_update.id,
                     purchase_models.PurchaseItem.purchase_id == purchase.id
                 ).first()
                 if not item:
                     raise HTTPException(status_code=404, detail=f"Purchase item {item_update.id} not found")
-                
-                # Reverse old stock
+
+                # Reverse previous stock
                 inventory_service.add_stock(
                     db, item.product_id, -item.quantity, current_user, commit=False
                 )
@@ -353,7 +387,7 @@ def update_purchase(db, purchase_id, update_data, current_user):
                 item.total_cost = item_update.quantity * item_update.cost_price
 
             else:
-                # New item → create
+                # New item
                 item_total = item_update.quantity * item_update.cost_price
                 item = purchase_models.PurchaseItem(
                     purchase_id=purchase.id,
@@ -379,8 +413,10 @@ def update_purchase(db, purchase_id, update_data, current_user):
 
             total_invoice_cost += item.quantity * item.cost_price
 
+        # Update purchase total
         purchase.total_cost = total_invoice_cost
 
+    # 4️⃣ Commit changes
     try:
         db.commit()
         db.refresh(purchase)
@@ -391,7 +427,7 @@ def update_purchase(db, purchase_id, update_data, current_user):
         db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
 
-    # -------------------- 4️⃣ Return Structured Response --------------------
+    # 5️⃣ Prepare response
     item_outputs = []
     for item in purchase.items:
         inventory = inventory_service.get_inventory_orm_by_product(db, item.product_id, current_user)
@@ -400,6 +436,8 @@ def update_purchase(db, purchase_id, update_data, current_user):
             "id": item.id,
             "product_id": item.product_id,
             "product_name": item.product.name if item.product else None,
+            "barcode": item.product.barcode if item.product else None,
+            "sku": item.product.sku if item.product else None,
             "quantity": item.quantity,
             "cost_price": item.cost_price,
             "total_cost": item.total_cost,

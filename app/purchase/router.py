@@ -102,6 +102,8 @@ def list_purchases_route(
                 "id": item.id,
                 "product_id": item.product_id,
                 "product_name": item.product.name if item.product else None,
+                "barcode": item.product.barcode if item.product else None,  # ✅ ADD
+                "sku": item.product.sku if item.product else None,          # ✅ ADD
                 "quantity": item.quantity,
                 "cost_price": item.cost_price,
                 "total_cost": item.total_cost,
@@ -149,6 +151,7 @@ def get_purchase_route(
 
 
 
+# -------------------- ROUTER --------------------
 @router.put(
     "/{purchase_id}",
     response_model=schemas.PurchaseOut

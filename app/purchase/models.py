@@ -53,6 +53,9 @@ class Purchase(Base):
         Index("idx_purchase_business_invoice", "business_id", "invoice_no"),
         Index("idx_purchase_business_created", "business_id", "created_at"),
         Index("idx_purchase_business_vendor", "business_id", "vendor_id"),
+    
+
+
     )
 
 

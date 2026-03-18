@@ -21,7 +21,9 @@ from zoneinfo import ZoneInfo
 
 
 
+
 router = APIRouter()
+
 
 
 LAGOS_TZ = ZoneInfo("Africa/Lagos")
@@ -116,7 +118,8 @@ def list_businesses(
                 db.query(license_models.LicenseKey.business_id)
                 .filter(
                     license_models.LicenseKey.is_active == True,
-                    license_models.LicenseKey.expiration_date >= datetime.utcnow()
+                    license_models.LicenseKey.expiration_date >= now_lagos
+
                 )
                 .subquery()
             )
@@ -178,7 +181,8 @@ def list_businesses(
         )
 
         is_active = (
-            latest_license.is_active and latest_license.expiration_date >= datetime.utcnow()
+            latest_license.is_active and latest_license.expiration_date >= now_lagos
+
         ) if latest_license else False
 
         if active is not None and is_active != active:

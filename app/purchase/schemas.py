@@ -4,9 +4,13 @@ from typing import Optional, List
 
 
 class PurchaseItemBase(BaseModel):
-    product_id: int
+    product_id: Optional[int] = None   # ✅ now optional
+    barcode: Optional[str] = None      # ✅ NEW (scanner input)
+    sku: Optional[str] = None          # ✅ optional fallback
+
     quantity: int
     cost_price: float
+
 
 
 class PurchaseItemCreate(PurchaseItemBase):
@@ -40,6 +44,8 @@ class PurchaseCreate(PurchaseBase):
 class PurchaseItemUpdate(BaseModel):
     id: Optional[int] = None  # existing item id
     product_id: int
+    barcode: Optional[str] = None   # ✅ ADD
+    sku: Optional[str] = None       # ✅ ADD
     quantity: int
     cost_price: float
 
