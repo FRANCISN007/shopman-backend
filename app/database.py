@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 from typing import Optional
 
 from sqlalchemy import create_engine, event
-from sqlalchemy.orm import sessionmaker, declarative_base, Session as SessionType, with_loader_criteria
+from sqlalchemy.orm import sessionmaker, declarative_base, Session, with_loader_criteria
 from contextvars import ContextVar
 
 # ============================================================
@@ -17,6 +17,9 @@ if not env_path.exists():
 load_dotenv(dotenv_path=env_path)
 print(f"🔄 Loaded environment from: {env_path}")
 
+# ============================================================
+# 🌐 ENV VARIABLES
+# ============================================================
 SQLALCHEMY_DATABASE_URL = os.getenv("DB_URL3")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
 
@@ -26,25 +29,26 @@ if not SQLALCHEMY_DATABASE_URL:
 print(f"🔍 Using database host: {SQLALCHEMY_DATABASE_URL.split('@')[-1]}")
 
 # ============================================================
-# ⚙️ SQLAlchemy Engine with Connection Pooling
+# ⚙️ SQLAlchemy Engine (SYNC + Render SSL)
 # ============================================================
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,
-    future=True,         # SQLAlchemy 2.0 style
-    pool_size=20,        # Persistent connections
-    max_overflow=40,     # Extra connections beyond pool
-    pool_pre_ping=True,  # Test connection before use
-    pool_recycle=1800,   # Recycle connections every 30 mins
+    echo=False,
+    future=True,
+    pool_pre_ping=True,
+    pool_recycle=1800,
+
+    # 🔥 IMPORTANT for Render (avoids connection crash)
+    connect_args={"sslmode": "require"},
 )
 
 # ============================================================
-# ⚙️ SessionLocal for FastAPI
+# ⚙️ SessionLocal
 # ============================================================
 SessionLocal = sessionmaker(
-    autocommit=False,
-    autoflush=False,
     bind=engine,
-    class_=SessionType,
+    autoflush=False,
+    autocommit=False,
 )
 
 Base = declarative_base()
@@ -65,15 +69,12 @@ def get_current_business() -> Optional[int]:
 # ============================================================
 # 🛡️ Tenant filter
 # ============================================================
-@event.listens_for(SessionType, "do_orm_execute")
+@event.listens_for(Session, "do_orm_execute")
 def _add_tenant_filter(execute_state):
-    """
-    Apply tenant isolation ONLY when a business_id exists.
-    Super admin (business_id=None) bypasses filtering.
-    """
     business_id = get_current_business()
 
-    if business_id is None:  # Super admin bypass
+    # Super admin → no filter
+    if business_id is None:
         return
 
     if not execute_state.is_select:
@@ -100,9 +101,6 @@ def _add_tenant_filter(execute_state):
 # 🔄 FastAPI dependency
 # ============================================================
 def get_db():
-    """
-    Provide a transactional DB session per request.
-    """
     db = SessionLocal()
     try:
         yield db
