@@ -6,7 +6,10 @@ from pydantic import BaseModel, computed_field
 
 # ---------- Sale Item ----------
 class SaleItemData(BaseModel):
-    product_id: int
+    product_id: Optional[int] = None
+    barcode: Optional[str] = None
+    sku: Optional[str] = None
+
     quantity: int
     selling_price: float
     discount: float = 0
@@ -25,16 +28,20 @@ class SaleItemOut(BaseModel):
     id: int
     sale_invoice_no: int
     product_id: int
+
     product_name: Optional[str] = None
+    sku: Optional[str] = None
+    barcode: Optional[str] = None
+
     quantity: int
     selling_price: float
     gross_amount: float
     discount: float
     net_amount: float
-    
 
     class Config:
         from_attributes = True
+
 
 
 class SaleItemOut2(BaseModel):
@@ -42,6 +49,9 @@ class SaleItemOut2(BaseModel):
     sale_invoice_no: int
     product_id: int
     product_name: Optional[str] = None
+    sku: Optional[str]
+    barcode: Optional[str]
+
     quantity: int
     selling_price: float
     gross_amount: float

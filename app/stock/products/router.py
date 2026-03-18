@@ -95,6 +95,8 @@ def list_products(
             selling_price=p.selling_price,
             is_active=p.is_active,
             business_id=p.business_id,
+            sku=p.sku,          # <-- assign here
+            barcode=p.barcode,
             created_at=p.created_at,
         )
         for p in products
@@ -167,6 +169,24 @@ def simple_products(
 
 
 
+@router.get("/scan/{barcode}", response_model=ProductSimpleSchema)
+def scan_product(
+    barcode: str,
+    business_id: int,
+    db: Session = Depends(get_db)
+):
+    product = db.query(Product).filter(
+        Product.barcode == barcode,
+        Product.business_id == business_id,
+        Product.is_active == True
+    ).first()
+
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    return product
+
+
 
 @router.get(
     "/{product_id}",
@@ -194,6 +214,8 @@ def get_product(
         type=product.type,
         cost_price=product.cost_price,
         selling_price=product.selling_price,
+        sku=product.sku,          # <-- assign here
+        barcode=product.barcode,
         is_active=product.is_active,
         business_id=product.business_id,
         created_at=product.created_at,
@@ -231,6 +253,8 @@ def update_product(
         type=updated_product.type,
         cost_price=updated_product.cost_price,
         selling_price=updated_product.selling_price,
+        sku=product.sku,          # <-- assign here
+        barcode=product.barcode,
         is_active=updated_product.is_active,
         business_id=product.business_id,
         created_at=updated_product.created_at,
@@ -269,6 +293,8 @@ def update_product_price(
         type=product.type,
         cost_price=product.cost_price,
         selling_price=product.selling_price,
+        sku=product.sku,          # <-- assign here
+        barcode=product.barcode,
         is_active=product.is_active,
         business_id=product.business_id,
         created_at=product.created_at,
@@ -343,6 +369,8 @@ def update_product_status(
         type=product.type,
         cost_price=product.cost_price,
         selling_price=product.selling_price,
+        sku=product.sku,          # <-- assign here
+        barcode=product.barcode,
         is_active=product.is_active,
         business_id=product.business_id,
         created_at=product.created_at,
@@ -383,6 +411,8 @@ def deactivate_product(
         type=product.type,
         cost_price=product.cost_price,
         selling_price=product.selling_price,
+        sku=product.sku,          # <-- assign here
+        barcode=product.barcode,
         is_active=product.is_active,
         business_id=product.business_id,
         created_at=product.created_at,
@@ -425,6 +455,8 @@ def activate_product(
         type=product.type,
         cost_price=product.cost_price,
         selling_price=product.selling_price,
+        sku=product.sku,          # <-- assign here
+        barcode=product.barcode,
         is_active=product.is_active,
         business_id=product.business_id,
         created_at=product.created_at,

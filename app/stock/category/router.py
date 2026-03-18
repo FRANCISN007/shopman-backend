@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 from typing import List
+from fastapi import Query, HTTPException, status
+from typing import List, Optional
 
 from app.database import get_db
 from . import schemas, service
@@ -27,16 +29,13 @@ def create_category(
 
 
 # ================= LIST =================
-@router.get(
-    "/",
-    response_model=List[schemas.CategoryOut]
-)
+@router.get("/", response_model=List[schemas.CategoryOut])
 def list_categories(
+    business_id: Optional[int] = Query(None, description="Filter categories by business (super admin only)"),
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user=Depends(get_current_user)
 ):
-    return service.list_categories(db, current_user)
-
+    return service.list_categories(db, current_user, business_id)
 
 
 # ================= SIMPLE LIST =================

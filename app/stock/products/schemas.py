@@ -8,8 +8,12 @@ from datetime import datetime
 # -------------------------------
 class ProductBase(BaseModel):
     name: str
-    category: str           # category NAME from frontend
+    category: str
     type: Optional[str] = None
+
+    sku: Optional[str] = None        # internal part number
+    barcode: Optional[str] = None    # scanner code
+
     cost_price: Optional[float] = None
     selling_price: Optional[float] = None
     business_id: Optional[int] = None
@@ -26,11 +30,15 @@ class ProductCreate(ProductBase):
 # -------------------------------
 class ProductUpdate(BaseModel):
     name: Optional[str] = None
-    type: Optional[str] = None       # phone, laptop, accessories
-    category: Optional[str] = None   # tecno, hp, apple, etc
+    type: Optional[str] = None
+    category: Optional[str] = None
+
+    sku: Optional[str] = None
+    barcode: Optional[str] = None
+
     cost_price: Optional[float] = None
     selling_price: Optional[float] = None
-    business_id: Optional[int] = None  # optional update of tenant if needed
+    business_id: Optional[int] = None
 
 # -------------------------------
 # Output
@@ -39,22 +47,30 @@ class ProductUpdate(BaseModel):
 
 
 
+from pydantic import BaseModel, validator
+from typing import Optional
+from datetime import datetime
+
 class ProductOut(BaseModel):
     id: int
     name: str
     category: Optional[str] = None
     type: Optional[str] = None
+
+    sku: Optional[str] = None
+    barcode: Optional[str] = None
+
     cost_price: Optional[float] = None
     selling_price: Optional[float] = None
     is_active: bool
-    business_id: Optional[int] = None   # allow NULL for super admin products
+    business_id: Optional[int] = None
     created_at: datetime
 
-    model_config = ConfigDict(from_attributes=True)
+    class Config:
+        from_attributes = True  # <-- allows reading from SQLAlchemy models
 
-    # 🔑 Convert Category ORM object → string name
-    @field_validator("category", mode="before")
-    @classmethod
+    # 🔹 Convert Category ORM object → string name
+    @validator("category", pre=True, always=True)
     def extract_category_name(cls, v):
         if hasattr(v, "name"):
             return v.name
@@ -81,8 +97,13 @@ class ProductPriceUpdate(BaseModel):
 class ProductSimpleSchema(BaseModel):
     id: int
     name: str
+    barcode: Optional[str] = None
     selling_price: Optional[float] = None
-    business_id: int  # include tenant
+    business_id: int
+
+    class Config:
+        from_attributes = True
+
 
     @property
     def selling_price_formatted(self) -> str:
@@ -96,7 +117,16 @@ class ProductSimpleSchema(BaseModel):
 class ProductSimpleSchema1(BaseModel):
     id: int
     name: str
-    business_id: int  # include tenant
+    barcode: Optional[str] = None
+    selling_price: Optional[float] = None
+    business_id: int
 
     class Config:
         from_attributes = True
+
+
+
+class ProductScanSchema(BaseModel):
+    barcode: Optional[str] = None
+    sku: Optional[str] = None
+

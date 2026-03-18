@@ -45,138 +45,239 @@ def create_sale_full(
     db: Session,
     sale_data: schemas.SaleFullCreate,
     current_user: UserDisplaySchema,
-    business_id: int | None = None,   # only used by super_admin
+    business_id: int | None = None,
 ) -> models.Sale:
     """
-    Create a complete sale (header + items) with full tenant isolation.
+    Create a complete sale (header + items).
+
+    Product can be identified using:
+    - product_id
+    - barcode
+    - sku
+
+    If product_id is provided, barcode and sku must match the product.
     """
+
     warnings_list = []
 
-    # ─── 1. Determine & validate business_id ───────────────────────
+    # ─────────────────────────────────────────
+    # 1️⃣ Determine Business (Tenant Safety)
+    # ─────────────────────────────────────────
+
     if "super_admin" in current_user.roles:
+
         if not business_id:
             raise HTTPException(
                 status_code=400,
                 detail="Super admin must provide business_id"
             )
+
         target_business_id = business_id
+
     else:
+
         if not current_user.business_id:
             raise HTTPException(
                 status_code=403,
                 detail="User does not belong to any business"
             )
+
         target_business_id = current_user.business_id
 
-        # Extra safety: reject if someone tries to spoof
         if business_id and business_id != target_business_id:
             raise HTTPException(
                 status_code=403,
                 detail="Cannot create sale for another business"
             )
 
-    # ─── 2. Create sale header ─────────────────────────────────────
+    # ─────────────────────────────────────────
+    # 2️⃣ Create Sale Header
+    # ─────────────────────────────────────────
+
     sale = models.Sale(
         business_id=target_business_id,
         invoice_date=sale_data.invoice_date,
-        customer_name=sale_data.customer_name.strip() if sale_data.customer_name else None,
+        customer_name=sale_data.customer_name.strip()
+        if sale_data.customer_name else None,
         customer_phone=sale_data.customer_phone,
         ref_no=sale_data.ref_no,
         sold_by=current_user.id,
-        total_amount=0.0,           # will be updated later
+        total_amount=0.0,
     )
 
     db.add(sale)
-    db.flush()  # ← this generates invoice_no via Identity
+    db.flush()
 
     total_amount = 0.0
 
-    # ─── 3. Process each item ──────────────────────────────────────
+    # ─────────────────────────────────────────
+    # 3️⃣ Process Sale Items
+    # ─────────────────────────────────────────
+
     for item_data in sale_data.items:
 
-        # Validate product + tenant
-        product = db.query(product_models.Product).filter(
-            product_models.Product.id == item_data.product_id,
-            product_models.Product.business_id == target_business_id,
-        ).first()
+        product = None
 
-        if not product:
+        # -------------------------------------
+        # Case 1️⃣ Product ID provided
+        # -------------------------------------
+        if item_data.product_id:
+
+            product = db.query(product_models.Product).filter(
+                product_models.Product.id == item_data.product_id,
+                product_models.Product.business_id == target_business_id,
+                product_models.Product.is_active == True
+            ).first()
+
+            if not product:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Product ID {item_data.product_id} not found"
+                )
+
+            # Validate barcode
+            if item_data.barcode and item_data.barcode != product.barcode:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Barcode mismatch for product '{product.name}'"
+                )
+
+            # Validate SKU
+            if item_data.sku and item_data.sku != product.sku:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"SKU mismatch for product '{product.name}'"
+                )
+
+        # -------------------------------------
+        # Case 2️⃣ Barcode only
+        # -------------------------------------
+        elif item_data.barcode:
+
+            product = db.query(product_models.Product).filter(
+                product_models.Product.barcode == item_data.barcode,
+                product_models.Product.business_id == target_business_id,
+                product_models.Product.is_active == True
+            ).first()
+
+            if not product:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Product with barcode '{item_data.barcode}' not found"
+                )
+
+        # -------------------------------------
+        # Case 3️⃣ SKU only
+        # -------------------------------------
+        elif item_data.sku:
+
+            product = db.query(product_models.Product).filter(
+                product_models.Product.sku == item_data.sku,
+                product_models.Product.business_id == target_business_id,
+                product_models.Product.is_active == True
+            ).first()
+
+            if not product:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Product with SKU '{item_data.sku}' not found"
+                )
+
+        else:
             raise HTTPException(
-                status_code=404,
-                detail=f"Product {item_data.product_id} not found or does not belong to this business"
+                status_code=400,
+                detail="Product identifier required (product_id, barcode, or sku)"
             )
 
-        # Freeze historical cost price
-        # Correct way to get latest cost
+        # ─────────────────────────────────────
+        # Historical Cost Price
+        # ─────────────────────────────────────
+
         latest_purchase_item = (
             db.query(purchase_models.PurchaseItem)
-            .join(purchase_models.Purchase)  # join header to get business_id
+            .join(purchase_models.Purchase)
             .filter(
-                purchase_models.PurchaseItem.product_id == item_data.product_id,
+                purchase_models.PurchaseItem.product_id == product.id,
                 purchase_models.Purchase.business_id == target_business_id
             )
             .order_by(purchase_models.PurchaseItem.id.desc())
             .first()
         )
-        historical_cost = latest_purchase_item.cost_price if latest_purchase_item else 0.0
 
-
-        # Stock check (warning only — your current policy)
-        stock_entry = inventory_service.get_inventory_orm_by_product(
-            db, item_data.product_id, current_user
+        historical_cost = (
+            latest_purchase_item.cost_price if latest_purchase_item else 0.0
         )
+
+        # ─────────────────────────────────────
+        # Inventory Check
+        # ─────────────────────────────────────
+
+        stock_entry = inventory_service.get_inventory_orm_by_product(
+            db, product.id, current_user
+        )
+
         available = stock_entry.current_stock if stock_entry else 0
 
         if available < item_data.quantity:
             warnings_list.append(
-                f"Low stock warning: {product.name} — "
-                f"Available: {available}, Requested: {item_data.quantity}"
+                f"Low stock warning: {product.name} "
+                f"(Available: {available}, Requested: {item_data.quantity})"
             )
 
-        # Deduct stock (non-blocking)
+        # ─────────────────────────────────────
+        # Deduct Stock
+        # ─────────────────────────────────────
+
         inventory_service.remove_stock(
             db,
-            product_id=item_data.product_id,
+            product_id=product.id,
             quantity=item_data.quantity,
             current_user=current_user,
             commit=False
         )
 
-        # Calculate line totals
-        gross = item_data.quantity * item_data.selling_price
+        # ─────────────────────────────────────
+        # Calculate Sale Amounts
+        # ─────────────────────────────────────
+
+        selling_price = item_data.selling_price or product.selling_price
+
+        gross = item_data.quantity * selling_price
         discount = item_data.discount or 0.0
         net = gross - discount
 
         sale_item = models.SaleItem(
             sale_invoice_no=sale.invoice_no,
-            product_id=item_data.product_id,
+            product_id=product.id,
             quantity=item_data.quantity,
-            selling_price=item_data.selling_price,
-            cost_price=historical_cost,     # frozen
-            total_amount=net,               # most systems use net here
+            selling_price=selling_price,
+            cost_price=historical_cost,
+            total_amount=net,
             gross_amount=gross,
             discount=discount,
             net_amount=net,
         )
 
         db.add(sale_item)
+
         total_amount += net
 
-    # ─── 4. Finalize sale ──────────────────────────────────────────
+    # ─────────────────────────────────────────
+    # 4️⃣ Finalize Sale
+    # ─────────────────────────────────────────
+
     sale.total_amount = total_amount
 
     try:
         db.commit()
         db.refresh(sale)
 
-        # Re-attach items with names for response
-        db.refresh(sale)  # refresh again to load relationships if needed
+        # attach product name for response
         for item in sale.items:
             if item.product:
-                item.product_name = item.product.name   # attach temporarily
+                item.product_name = item.product.name
 
-        # Optional: attach warnings if your frontend wants them
-        sale.warnings = warnings_list   # not persisted — only for this response
+        sale.warnings = warnings_list
 
         return sale
 
@@ -186,12 +287,18 @@ def create_sale_full(
             status_code=400,
             detail=f"Database error during sale creation: {str(e.orig)}"
         )
+
     except Exception as e:
         db.rollback()
         raise HTTPException(
             status_code=500,
             detail=f"Unexpected error: {str(e)}"
         )
+
+
+
+
+
 # ============================================================
 # ADD SINGLE ITEM TO EXISTING SALE
 # ============================================================
@@ -662,6 +769,8 @@ def list_sales(
                 sale_invoice_no=item.sale_invoice_no,
                 product_id=item.product_id,
                 product_name=item.product.name if item.product else None,
+                sku=item.product.sku if item.product else None,
+                barcode=item.product.barcode if item.product else None,
                 quantity=item.quantity,
                 selling_price=item.selling_price,
                 gross_amount=item.gross_amount,
@@ -670,6 +779,7 @@ def list_sales(
             )
             for item in (sale.items or [])
         ]
+
 
         sales_list.append(
             schemas.SaleOut2(
@@ -1501,6 +1611,8 @@ def get_receipt_data(
                 sale_invoice_no=item.sale_invoice_no,
                 product_id=item.product_id,
                 product_name=item.product.name if item.product else None,
+                sku=item.product.sku if item.product else None,          # ✅ ADD
+                barcode=item.product.barcode if item.product else None,  # ✅ ADD
                 quantity=item.quantity or 0,
                 selling_price=float(item.selling_price or 0),
                 gross_amount=float(item.gross_amount or 0),

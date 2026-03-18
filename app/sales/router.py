@@ -33,29 +33,33 @@ router = APIRouter()
 # router.py
 # ────────────────────────────────────────────────────────────────
 
+from fastapi import Query
+
 @router.post("/", response_model=schemas.SaleOut, status_code=201)
 def create_sale(
     sale_data: schemas.SaleFullCreate,
+    business_id: int | None = Query(
+        None, description="Super admin can specify business"
+    ),
     db: Session = Depends(get_db),
     current_user: UserDisplaySchema = Depends(
         role_required(["user", "manager", "admin", "super_admin"])
     ),
 ):
     """
-    Create a new sale (header + items) in one atomic operation.
-    Super admin must provide business_id in a future version or via header/query.
+    Create a new sale (header + items).
+    Super admin can specify business_id.
     """
-    # For now we pass business_id=None → function will use user's business
-    # Later you can add query param ?business_id=123 for super_admin
+
     created_sale = service.create_sale_full(
         db=db,
         sale_data=sale_data,
         current_user=current_user,
-        business_id=None,           # change later if you add ?business_id=
+        business_id=business_id,
     )
 
-    # Enrich response with product names (if not already attached)
     items_out = []
+
     for item in created_sale.items:
         items_out.append(
             schemas.SaleItemOut(
@@ -63,6 +67,8 @@ def create_sale(
                 sale_invoice_no=item.sale_invoice_no,
                 product_id=item.product_id,
                 product_name=item.product.name if item.product else None,
+                sku=item.product.sku if item.product else None,
+                barcode=item.product.barcode if item.product else None,
                 quantity=item.quantity,
                 selling_price=item.selling_price,
                 gross_amount=item.gross_amount,

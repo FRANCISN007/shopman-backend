@@ -1,11 +1,14 @@
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
+from fastapi import Query, HTTPException, status
+from typing import List, Optional
 from . import models, schemas
 from app.users.schemas import UserDisplaySchema
 from app.stock.products import models as product_models
 
 
 
+# ================= SERVICE =================
 def create_category(
     db: Session,
     category: schemas.CategoryCreate,
@@ -14,13 +17,20 @@ def create_category(
     """
     SaaS-safe category creation:
     - Tenant-scoped uniqueness
-    - Super admin bypass
+    - Super admin must provide business_id
     """
 
     # 🔹 Determine business_id
     if "super_admin" in getattr(current_user, "roles", []):
-        business_id = None  # super admin can create global categories
+        # Require super admin to provide business_id
+        business_id = getattr(category, "business_id", None)
+        if not business_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Super admin must provide a business_id"
+            )
     else:
+        # Normal user uses their own business
         business_id = getattr(current_user, "business_id", None)
         if not business_id:
             raise HTTPException(
@@ -48,7 +58,7 @@ def create_category(
     db_category = models.Category(
         name=category.name.strip(),
         description=category.description,
-        business_id=business_id  # None for super admin
+        business_id=business_id
     )
 
     db.add(db_category)
@@ -58,26 +68,25 @@ def create_category(
 
 
 
-
-# ================= LIST =================
-def list_categories(db: Session, current_user):
+# ================= SERVICE =================
+def list_categories(db: Session, current_user, business_id: Optional[int] = None):
     """
     SaaS-safe category listing:
-    - Super admin → see all categories
+    - Super admin → see all categories or filter by business_id
     - Normal users → see global + their business categories only
     """
+    roles = getattr(current_user, "roles", [])
 
-    # 🔹 Super Admin sees everything
-    if "super_admin" in getattr(current_user, "roles", []):
-        return (
-            db.query(models.Category)
-            .order_by(models.Category.name)
-            .all()
-        )
+    # 🔹 Super Admin
+    if "super_admin" in roles:
+        query = db.query(models.Category)
+        if business_id is not None:
+            # Only categories for that business
+            query = query.filter(models.Category.business_id == business_id)
+        return query.order_by(models.Category.name).all()
 
     # 🔹 Normal users
     business_id = getattr(current_user, "business_id", None)
-
     if not business_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -88,12 +97,11 @@ def list_categories(db: Session, current_user):
         db.query(models.Category)
         .filter(
             (models.Category.business_id == business_id) |
-            (models.Category.business_id.is_(None))  # include global
+            (models.Category.business_id.is_(None))  # include global categories
         )
         .order_by(models.Category.name)
         .all()
     )
-
 
 # ================= SIMPLE LIST =================
 def list_categories_simple(db: Session, current_user):
