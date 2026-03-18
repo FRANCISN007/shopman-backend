@@ -13,7 +13,7 @@ load_dotenv()
 
 router = APIRouter(prefix="/backup", tags=["Database Backup"])
 
-DB_URL = os.getenv("DB_URL2")
+DB_URL = os.getenv("DB_URL3")
 
 BACKUP_DIR = os.path.join(os.getcwd(), "backup_files")
 os.makedirs(BACKUP_DIR, exist_ok=True)
@@ -42,42 +42,47 @@ def cleanup_old_backups(days: int = 7):
 # ----------- actual backup function -----------
 
 def run_auto_backup():
+
     if not DB_URL or not DB_URL.startswith("postgresql://"):
-        raise Exception("Invalid DB_URL")
+        print("Backup skipped: invalid DB_URL")
+        return
 
-    parsed = urlparse(DB_URL)
+    try:
 
-    db_user = parsed.username
-    db_password = parsed.password
-    db_host = parsed.hostname or "localhost"
-    db_port = parsed.port or 5432
-    db_name = parsed.path.lstrip("/")
+        parsed = urlparse(DB_URL)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"{db_name}_backup_{timestamp}.backup"
-    filepath = os.path.join(BACKUP_DIR, filename)
+        db_user = parsed.username
+        db_password = parsed.password
+        db_host = parsed.hostname or "localhost"
+        db_port = parsed.port or 5432
+        db_name = parsed.path.lstrip("/")
 
-    pg_dump_cmd = [
-        PG_DUMP_PATH,
-        "-h", db_host,
-        "-p", str(db_port),
-        "-U", db_user,
-        "-F", "c",
-        "-f", filepath,
-        db_name
-    ]
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    env = os.environ.copy()
-    env["PGPASSWORD"] = db_password
+        filename = f"{db_name}_backup_{timestamp}.backup"
+        filepath = os.path.join(BACKUP_DIR, filename)
 
-    result = subprocess.run(pg_dump_cmd, env=env, capture_output=True, text=True)
+        pg_dump_cmd = [
+            PG_DUMP_PATH,
+            "-h", db_host,
+            "-p", str(db_port),
+            "-U", db_user,
+            "-F", "c",
+            "-f", filepath,
+            db_name
+        ]
 
-    if result.returncode != 0:
-        raise Exception(result.stderr)
+        env = os.environ.copy()
+        env["PGPASSWORD"] = db_password
 
-    cleanup_old_backups()
+        subprocess.run(pg_dump_cmd, env=env, check=True)
 
-    return filepath
+        cleanup_old_backups()
+
+        print(f"Backup created: {filename}")
+
+    except Exception as e:
+        print(f"Backup failed: {str(e)}")
 
 
 # ----------- scheduler -----------
@@ -97,15 +102,23 @@ def backup_database(
     format: str = "custom",
     current_user=Depends(role_required(["super_admin"]))
 ):
-    try:
-        filepath = run_auto_backup()
 
-        return FileResponse(
-            path=filepath,
-            filename=os.path.basename(filepath),
-            media_type="application/octet-stream"
-        )
+    run_auto_backup()
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    # get newest backup file
+    files = sorted(
+        [os.path.join(BACKUP_DIR, f) for f in os.listdir(BACKUP_DIR)],
+        key=os.path.getmtime,
+        reverse=True
+    )
 
+    if not files:
+        raise HTTPException(status_code=500, detail="Backup failed")
+
+    filepath = files[0]
+
+    return FileResponse(
+        path=filepath,
+        filename=os.path.basename(filepath),
+        media_type="application/octet-stream"
+    )
