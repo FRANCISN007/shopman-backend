@@ -271,7 +271,8 @@ def get_business(
     )
 
     biz_out.license_active = (
-        latest_license.is_active and latest_license.expiration_date >= datetime.utcnow()
+        latest_license.is_active and latest_license.expiration_date >= datetime.now(LAGOS_TZ)
+
     ) if latest_license else False
 
     biz_out.expiration_date = latest_license.expiration_date if latest_license else None
@@ -330,7 +331,8 @@ def update_business(
     )
 
     biz_out.license_active = (
-        latest_license.is_active and latest_license.expiration_date >= datetime.utcnow()
+        latest_license.is_active and latest_license.expiration_date >= datetime.now(LAGOS_TZ)
+
     ) if latest_license else False
 
     biz_out.expiration_date = latest_license.expiration_date if latest_license else None
