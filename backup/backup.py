@@ -9,20 +9,25 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 from app.users.permissions import role_required
 
+# ---------------- LOAD ENV ----------------
 load_dotenv()
 
-router = APIRouter(prefix="/backup", tags=["Database Backup"])
+# ---------------- ROUTER (SECURED) ----------------
+router = APIRouter(
+    prefix="/backup",
+    tags=["Database Backup"],
+    dependencies=[Depends(role_required(["super_admin"], bypass_admin=False))]
+)
 
+# ---------------- CONFIG ----------------
 DB_URL = os.getenv("DB_URL3")
+PG_DUMP_PATH = os.getenv("PG_DUMP_PATH", "pg_dump")
 
 BACKUP_DIR = os.path.join(os.getcwd(), "backup_files")
 os.makedirs(BACKUP_DIR, exist_ok=True)
 
-PG_DUMP_PATH = os.getenv("PG_DUMP_PATH", "pg_dump")
 
-
-# ----------- cleanup old backups -----------
-
+# ---------------- CLEANUP OLD BACKUPS ----------------
 def cleanup_old_backups(days: int = 7):
     now = datetime.now()
 
@@ -35,20 +40,19 @@ def cleanup_old_backups(days: int = 7):
             if now - file_time > timedelta(days=days):
                 try:
                     os.remove(path)
-                except Exception:
-                    pass
+                    print(f"Deleted old backup: {file}")
+                except Exception as e:
+                    print(f"Failed to delete {file}: {str(e)}")
 
 
-# ----------- actual backup function -----------
-
+# ---------------- RUN BACKUP ----------------
 def run_auto_backup():
 
     if not DB_URL or not DB_URL.startswith("postgresql://"):
-        print("Backup skipped: invalid DB_URL")
-        return
+        print("❌ Backup skipped: invalid DB_URL")
+        return None
 
     try:
-
         parsed = urlparse(DB_URL)
 
         db_user = parsed.username
@@ -79,43 +83,59 @@ def run_auto_backup():
 
         cleanup_old_backups()
 
-        print(f"Backup created: {filename}")
+        print(f"✅ Backup created: {filename}")
+
+        return filepath
+
+    except subprocess.CalledProcessError as e:
+        print(f"❌ pg_dump failed: {str(e)}")
+        return None
 
     except Exception as e:
-        print(f"Backup failed: {str(e)}")
+        print(f"❌ Backup error: {str(e)}")
+        return None
 
 
-# ----------- scheduler -----------
-
+# ---------------- SCHEDULER ----------------
 scheduler = BackgroundScheduler()
 
-# run every midnight
+# Runs every midnight
 scheduler.add_job(run_auto_backup, "cron", hour=0, minute=0)
 
 scheduler.start()
 
 
-# ----------- manual backup endpoint -----------
-
-@router.get("/db")
-def backup_database(
-    format: str = "custom",
-    current_user=Depends(role_required(["super_admin"]))
-):
-
-    run_auto_backup()
-
-    # get newest backup file
-    files = sorted(
-        [os.path.join(BACKUP_DIR, f) for f in os.listdir(BACKUP_DIR)],
-        key=os.path.getmtime,
-        reverse=True
-    )
+# ---------------- GET LATEST BACKUP FILE ----------------
+def get_latest_backup():
+    files = [
+        os.path.join(BACKUP_DIR, f)
+        for f in os.listdir(BACKUP_DIR)
+        if os.path.isfile(os.path.join(BACKUP_DIR, f))
+    ]
 
     if not files:
-        raise HTTPException(status_code=500, detail="Backup failed")
+        return None
 
-    filepath = files[0]
+    files.sort(key=os.path.getmtime, reverse=True)
+    return files[0]
+
+
+# ---------------- MANUAL BACKUP ENDPOINT ----------------
+@router.get("/db")
+def backup_database(format: str = "custom"):
+    """
+    Trigger a manual backup and download the latest file.
+    Only accessible by super admin.
+    """
+
+    filepath = run_auto_backup()
+
+    # fallback: get latest if new one failed
+    if not filepath:
+        filepath = get_latest_backup()
+
+    if not filepath or not os.path.exists(filepath):
+        raise HTTPException(status_code=500, detail="Backup failed or file not found")
 
     return FileResponse(
         path=filepath,

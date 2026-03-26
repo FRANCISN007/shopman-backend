@@ -172,17 +172,40 @@ def simple_products(
 @router.get("/scan/{barcode}", response_model=ProductSimpleSchema)
 def scan_product(
     barcode: str,
-    business_id: int,
-    db: Session = Depends(get_db)
+    business_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: UserDisplaySchema = Depends(get_current_user),
 ):
+    """
+    Scan product by barcode.
+    - Normal users → restricted to their business
+    - Super admin → can pass business_id
+    """
+
+    # -------------------- Determine Business --------------------
+    if "super_admin" in current_user.roles:
+        if not business_id:
+            raise HTTPException(
+                status_code=400,
+                detail="business_id is required for super admin"
+            )
+        target_business_id = business_id
+    else:
+        target_business_id = current_user.business_id
+
+    # -------------------- Query Product --------------------
     product = db.query(Product).filter(
         Product.barcode == barcode,
-        Product.business_id == business_id,
+        Product.business_id == target_business_id,
         Product.is_active == True
     ).first()
 
+    # -------------------- Handle Not Found --------------------
     if not product:
-        raise HTTPException(status_code=404, detail="Product not found")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Product with barcode '{barcode}' not found"
+        )
 
     return product
 
