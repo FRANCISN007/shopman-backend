@@ -1457,10 +1457,11 @@ def get_sales_by_customer(
             )
         query = query.filter(models.Sale.business_id == current_user.business_id)
 
-    # ─── 3. Date filters (timezone-aware) ────────────────────────────
+    # ─── 3. Date filters ──────────────────────────────────────────────
     if start_date:
         start_dt = datetime.combine(start_date, time.min, tzinfo=LAGOS_TZ)
         query = query.filter(models.Sale.sold_at >= start_dt)
+
     if end_date:
         end_dt = datetime.combine(end_date, time.max, tzinfo=LAGOS_TZ)
         query = query.filter(models.Sale.sold_at <= end_dt)
@@ -1468,10 +1469,10 @@ def get_sales_by_customer(
     # ─── 4. Execute query ─────────────────────────────────────────────
     sales = query.all()
 
-    # ─── 5. Sort in Python by sold_at descending ──────────────────────
+    # ─── 5. Sort ──────────────────────────────────────────────────────
     sales.sort(key=lambda x: x.sold_at, reverse=True)
 
-    # ─── 6. Enrich and build response ────────────────────────────────
+    # ─── 6. Build response ────────────────────────────────────────────
     sales_list = []
 
     for sale in sales:
@@ -1479,14 +1480,21 @@ def get_sales_by_customer(
         customer_phone = sale.customer_phone or "-"
         ref_no = sale.ref_no or "-"
 
-        # Enrich items
         items_list = []
         total_amount = 0.0
         total_discount = 0.0
 
         for item in sale.items:
-            product_name = item.product.name if item.product else "-"
-            gross_amount = float((item.selling_price or 0) * (item.quantity or 0))
+            product = item.product
+
+            product_name = product.name if product else "-"
+            sku = product.sku if product and product.sku else "-"
+            barcode = product.barcode if product and product.barcode else "-"
+
+            quantity = item.quantity or 0
+            price = float(item.selling_price or 0)
+
+            gross_amount = price * quantity
             discount = float(item.discount or 0)
             net_amount = gross_amount - discount
 
@@ -1495,8 +1503,10 @@ def get_sales_by_customer(
                 "sale_invoice_no": sale.invoice_no,
                 "product_id": item.product_id,
                 "product_name": product_name,
-                "quantity": item.quantity or 0,
-                "selling_price": float(item.selling_price or 0),
+                "sku": sku,               # ✅ FIXED
+                "barcode": barcode,       # ✅ FIXED
+                "quantity": quantity,
+                "selling_price": price,
                 "gross_amount": gross_amount,
                 "discount": discount,
                 "net_amount": net_amount,
@@ -1505,7 +1515,7 @@ def get_sales_by_customer(
             total_amount += net_amount
             total_discount += discount
 
-        # Payments
+        # ─── Payments ────────────────────────────────────────────────
         total_paid = sum(float(p.amount_paid or 0) for p in (sale.payments or []))
         balance_due = total_amount - total_paid
 
@@ -1516,7 +1526,7 @@ def get_sales_by_customer(
         else:
             payment_status = "part_paid"
 
-        # Build SaleOut2 object
+        # ─── Append result ───────────────────────────────────────────
         sales_list.append(
             schemas.SaleOut2(
                 id=sale.id,
