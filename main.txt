@@ -30,11 +30,6 @@ from app.core.tenant_middleware import TenantMiddleware
 import os
 from contextlib import asynccontextmanager
 
-from fastapi.responses import JSONResponse
-from fastapi.exceptions import RequestValidationError
-from starlette.exceptions import HTTPException as StarletteHTTPException
-
-
 # ---------------------------
 # APP SETUP
 # ---------------------------
@@ -52,45 +47,18 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-
-# ---------------------------
-# FORCE CORS ON ALL ERRORS
-# ---------------------------
-
-@app.exception_handler(StarletteHTTPException)
-async def http_exception_handler(request, exc):
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={"detail": exc.detail},
-        headers={
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Credentials": "true"
-        },
-    )
-
-
-@app.exception_handler(RequestValidationError)
-async def validation_exception_handler(request, exc):
-    return JSONResponse(
-        status_code=422,
-        content={"detail": str(exc)},
-        headers={
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Credentials": "true"
-        },
-    )
-
 # ---------------------------
 # MIDDLEWARE
 # ---------------------------
 
 app.add_middleware(TenantMiddleware)
 
-# 🔥 CRITICAL: CORS (allow all for now to debug)
+# ✅ CLEAN CORS (PRODUCTION SAFE)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://shopman-frontend-production.up.railway.app"
+        "https://shopman-frontend-production.up.railway.app",
+        "http://localhost:3000"
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -98,7 +66,7 @@ app.add_middleware(
 )
 
 # ---------------------------
-# HANDLE PREFLIGHT (VERY IMPORTANT)
+# PREFLIGHT HANDLING
 # ---------------------------
 
 @app.options("/{full_path:path}")
@@ -113,7 +81,7 @@ os.makedirs("uploads/attachments", exist_ok=True)
 app.mount("/files", StaticFiles(directory="uploads"), name="files")
 
 # ---------------------------
-# ROUTERS (API FIRST)
+# ROUTERS (API FIRST - NO CHANGES)
 # ---------------------------
 
 app.include_router(superadmin_router, prefix="/superadmin")
@@ -148,7 +116,7 @@ def debug_ping():
     return {"status": "ok"}
 
 # ---------------------------
-# SERVE FRONTEND (VERY LAST)
+# SERVE FRONTEND (LAST)
 # ---------------------------
 
 react_build_dir = os.path.abspath(
