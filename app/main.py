@@ -30,6 +30,11 @@ from app.core.tenant_middleware import TenantMiddleware
 import os
 from contextlib import asynccontextmanager
 
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+
 # ---------------------------
 # APP SETUP
 # ---------------------------
@@ -47,6 +52,34 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+
+# ---------------------------
+# FORCE CORS ON ALL ERRORS
+# ---------------------------
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request, exc):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Credentials": "true"
+        },
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request, exc):
+    return JSONResponse(
+        status_code=422,
+        content={"detail": str(exc)},
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Credentials": "true"
+        },
+    )
+
 # ---------------------------
 # MIDDLEWARE
 # ---------------------------
@@ -56,7 +89,9 @@ app.add_middleware(TenantMiddleware)
 # 🔥 CRITICAL: CORS (allow all for now to debug)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 🔥 TEMPORARY (fix login first)
+    allow_origins=[
+        "https://shopman-frontend-production.up.railway.app"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
