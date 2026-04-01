@@ -119,7 +119,11 @@ def run_auto_backup():
 
         if result.returncode != 0:
             print("❌ pg_dump FAILED")
+            print("STDOUT:\n", result.stdout)
+            print("STDERR:\n", result.stderr)
+            print("DB_URL USED:\n", DB_URL)
             return None
+
 
         if not os.path.exists(filepath):
             print("❌ Backup file not created")
