@@ -103,11 +103,11 @@ app = FastAPI(
 # Tenant middleware must be added BEFORE routers
 app.add_middleware(TenantMiddleware)
 
-# ✅ CLEAN CORS (PRODUCTION SAFE)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://shopman-frontend-production.up.railway.app",
+        "https://app.shopman.uk",   # ✅ ADD THIS
         "http://localhost:3000"
     ],
     allow_credentials=True,
