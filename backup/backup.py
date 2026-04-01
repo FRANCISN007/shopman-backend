@@ -18,28 +18,17 @@ router = APIRouter(
 )
 
 # ---------------- CONFIG ----------------
-RAW_DB_URL = os.getenv("DB_URL3") or os.getenv("DATABASE_URL")
 PG_DUMP_PATH = os.getenv("PG_DUMP_PATH", "pg_dump")
 
-if not RAW_DB_URL:
-    raise ValueError("❌ DATABASE_URL / DB_URL3 is not set")
+DB_HOST = os.getenv("PGHOST", "postgres.railway.internal")
+DB_USER = os.getenv("PGUSER", "postgres")
+DB_PASSWORD = os.getenv("PGPASSWORD")
+DB_NAME = os.getenv("PGDATABASE", "railway")
+DB_PORT = os.getenv("PGPORT", "5432")
 
-# ---------------- CLEAN DATABASE URL ----------------
-def normalize_db_url(url: str) -> str:
-    """
-    Convert SQLAlchemy / Railway URLs into pg_dump-compatible URL
-    """
-    if url.startswith("postgresql+psycopg2://"):
-        url = url.replace("postgresql+psycopg2://", "postgresql://", 1)
-
-    if url.startswith("postgres://"):
-        url = url.replace("postgres://", "postgresql://", 1)
-
-    return url
-
-DB_URL = normalize_db_url(RAW_DB_URL)
-
-print("🔥 FINAL DB_URL (for pg_dump):", DB_URL)
+# ---------------- VALIDATION ----------------
+if not DB_PASSWORD:
+    raise ValueError("❌ PGPASSWORD is not set in environment variables")
 
 # ---------------- BACKUP DIR ----------------
 BACKUP_DIR = os.path.join(os.getcwd(), "backup_files")
@@ -73,7 +62,7 @@ def check_pg_dump():
         )
         return True
     except Exception:
-        print("❌ pg_dump not available on server (install postgresql-client)")
+        print("❌ pg_dump not available (install postgresql in Railway)")
         return False
 
 # ---------------- RUN BACKUP ----------------
@@ -82,26 +71,42 @@ def run_auto_backup():
         return None
 
     try:
+        # final safety check
+        required = {
+            "DB_HOST": DB_HOST,
+            "DB_USER": DB_USER,
+            "DB_NAME": DB_NAME,
+            "DB_PORT": DB_PORT,
+            "DB_PASSWORD": DB_PASSWORD,
+        }
+
+        for k, v in required.items():
+            if not v:
+                print(f"❌ Missing env: {k}")
+                return None
+
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"backup_{timestamp}.backup"
         filepath = os.path.join(BACKUP_DIR, filename)
 
         env = os.environ.copy()
-
-        # 🔐 Railway ALWAYS needs SSL
-        env["PGSSLMODE"] = "require"
+        env["PGPASSWORD"] = DB_PASSWORD
+        env["PGSSLMODE"] = "disable"
 
         pg_dump_cmd = [
             PG_DUMP_PATH,
-            "--dbname", DB_URL,
+            "-h", DB_HOST,
+            "-U", DB_USER,
+            "-p", str(DB_PORT),
+            "-d", DB_NAME,
             "-F", "c",
             "-f", filepath,
             "--no-owner",
-            "--no-privileges",
-            "--verbose"
+            "--no-privileges"
         ]
 
-        print("🚀 Running pg_dump...")
+        print("🚀 Running pg_dump (Railway internal)...")
+        print(" ".join(pg_dump_cmd))
 
         result = subprocess.run(
             pg_dump_cmd,
@@ -110,20 +115,12 @@ def run_auto_backup():
             text=True
         )
 
-        # ---------------- DEBUG OUTPUT ----------------
-        if result.stdout:
-            print("STDOUT:", result.stdout)
-
-        if result.stderr:
-            print("STDERR:", result.stderr)
+        print("STDOUT:", result.stdout)
+        print("STDERR:", result.stderr)
 
         if result.returncode != 0:
-            print("❌ pg_dump FAILED")
-            print("STDOUT:\n", result.stdout)
-            print("STDERR:\n", result.stderr)
-            print("DB_URL USED:\n", DB_URL)
+            print("❌ Backup failed")
             return None
-
 
         if not os.path.exists(filepath):
             print("❌ Backup file not created")
@@ -135,7 +132,7 @@ def run_auto_backup():
         return filepath
 
     except Exception as e:
-        print(f"❌ Backup exception: {e}")
+        print(f"❌ Backup exception: {str(e)}")
         return None
 
 # ---------------- GET LATEST BACKUP ----------------
@@ -167,7 +164,7 @@ def backup_database():
     filepath = run_auto_backup()
 
     if not filepath:
-        print("⚠️ Backup failed → trying latest file...")
+        print("⚠️ Backup failed → using latest backup")
         filepath = get_latest_backup()
 
     if not filepath or not os.path.exists(filepath):
