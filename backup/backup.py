@@ -4,6 +4,7 @@ import os
 import subprocess
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
+import shutil
 
 from app.users.permissions import role_required
 
@@ -18,6 +19,8 @@ router = APIRouter(
 )
 
 # ---------------- CONFIG ----------------
+
+PG_DUMP_PATH = shutil.which("pg_dump")
 PG_DUMP_PATH = os.getenv("PG_DUMP_PATH", "pg_dump")
 
 DB_HOST = os.getenv("PGHOST", "postgres.railway.internal")
@@ -53,17 +56,20 @@ def cleanup_old_backups(days: int = 7):
 
 # ---------------- CHECK PG_DUMP ----------------
 def check_pg_dump():
-    try:
-        subprocess.run(
-            [PG_DUMP_PATH, "--version"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=True
-        )
-        return True
-    except Exception:
-        print("❌ pg_dump not available (install postgresql in Railway)")
+    if not PG_DUMP_PATH:
+        print("❌ pg_dump not found in PATH")
         return False
+
+    result = subprocess.run(
+        [PG_DUMP_PATH, "--version"],
+        capture_output=True,
+        text=True
+    )
+
+    print("pg_dump check:", result.stdout, result.stderr)
+
+    return result.returncode == 0
+
 
 # ---------------- RUN BACKUP ----------------
 def run_auto_backup():
