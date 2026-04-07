@@ -29,7 +29,17 @@ if not SQLALCHEMY_DATABASE_URL:
 print(f"🔍 Using database host: {SQLALCHEMY_DATABASE_URL.split('@')[-1]}")
 
 # ============================================================
-# ⚙️ SQLAlchemy Engine (SYNC + Render SSL)
+# 🔐 SSL CONFIG (FIXED)
+# ============================================================
+# Enable SSL only in production (Render / Railway / cloud DB)
+DB_SSL = os.getenv("DB_SSL", "false").lower() == "true"
+
+connect_args = {}
+if DB_SSL:
+    connect_args = {"sslmode": "require"}
+
+# ============================================================
+# ⚙️ SQLAlchemy Engine
 # ============================================================
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,
@@ -37,9 +47,7 @@ engine = create_engine(
     future=True,
     pool_pre_ping=True,
     pool_recycle=1800,
-
-    # 🔥 IMPORTANT for Render (avoids connection crash)
-    connect_args={"sslmode": "require"},
+    connect_args=connect_args,
 )
 
 # ============================================================

@@ -15,6 +15,7 @@ class ExpenseBase(BaseModel):
     amount: float
     payment_method: str          # cash / transfer / pos
     bank_id: Optional[int] = None
+    vendor_name: Optional[str] = None
     expense_date: datetime
 
 

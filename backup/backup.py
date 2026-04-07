@@ -4,7 +4,6 @@ import os
 import subprocess
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
-import shutil
 
 from app.users.permissions import role_required
 
@@ -19,19 +18,28 @@ router = APIRouter(
 )
 
 # ---------------- CONFIG ----------------
-
-PG_DUMP_PATH = shutil.which("pg_dump")
+RAW_DB_URL = os.getenv("DB_URL3") or os.getenv("DATABASE_URL")
 PG_DUMP_PATH = os.getenv("PG_DUMP_PATH", "pg_dump")
 
-DB_HOST = os.getenv("PGHOST", "postgres.railway.internal")
-DB_USER = os.getenv("PGUSER", "postgres")
-DB_PASSWORD = os.getenv("PGPASSWORD")
-DB_NAME = os.getenv("PGDATABASE", "railway")
-DB_PORT = os.getenv("PGPORT", "5432")
+if not RAW_DB_URL:
+    raise ValueError("❌ DATABASE_URL / DB_URL3 is not set")
 
-# ---------------- VALIDATION ----------------
-if not DB_PASSWORD:
-    raise ValueError("❌ PGPASSWORD is not set in environment variables")
+# ---------------- CLEAN DATABASE URL ----------------
+def normalize_db_url(url: str) -> str:
+    """
+    Convert SQLAlchemy / Railway URLs into pg_dump-compatible URL
+    """
+    if url.startswith("postgresql+psycopg2://"):
+        url = url.replace("postgresql+psycopg2://", "postgresql://", 1)
+
+    if url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql://", 1)
+
+    return url
+
+DB_URL = normalize_db_url(RAW_DB_URL)
+
+print("🔥 FINAL DB_URL (for pg_dump):", DB_URL)
 
 # ---------------- BACKUP DIR ----------------
 BACKUP_DIR = os.path.join(os.getcwd(), "backup_files")
@@ -56,20 +64,17 @@ def cleanup_old_backups(days: int = 7):
 
 # ---------------- CHECK PG_DUMP ----------------
 def check_pg_dump():
-    if not PG_DUMP_PATH:
-        print("❌ pg_dump not found in PATH")
+    try:
+        subprocess.run(
+            [PG_DUMP_PATH, "--version"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True
+        )
+        return True
+    except Exception:
+        print("❌ pg_dump not available on server (install postgresql-client)")
         return False
-
-    result = subprocess.run(
-        [PG_DUMP_PATH, "--version"],
-        capture_output=True,
-        text=True
-    )
-
-    print("pg_dump check:", result.stdout, result.stderr)
-
-    return result.returncode == 0
-
 
 # ---------------- RUN BACKUP ----------------
 def run_auto_backup():
@@ -77,42 +82,26 @@ def run_auto_backup():
         return None
 
     try:
-        # final safety check
-        required = {
-            "DB_HOST": DB_HOST,
-            "DB_USER": DB_USER,
-            "DB_NAME": DB_NAME,
-            "DB_PORT": DB_PORT,
-            "DB_PASSWORD": DB_PASSWORD,
-        }
-
-        for k, v in required.items():
-            if not v:
-                print(f"❌ Missing env: {k}")
-                return None
-
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"backup_{timestamp}.backup"
         filepath = os.path.join(BACKUP_DIR, filename)
 
         env = os.environ.copy()
-        env["PGPASSWORD"] = DB_PASSWORD
-        env["PGSSLMODE"] = "disable"
+
+        # 🔐 Railway ALWAYS needs SSL
+        env["PGSSLMODE"] = "require"
 
         pg_dump_cmd = [
             PG_DUMP_PATH,
-            "-h", DB_HOST,
-            "-U", DB_USER,
-            "-p", str(DB_PORT),
-            "-d", DB_NAME,
+            "--dbname", DB_URL,
             "-F", "c",
             "-f", filepath,
             "--no-owner",
-            "--no-privileges"
+            "--no-privileges",
+            "--verbose"
         ]
 
-        print("🚀 Running pg_dump (Railway internal)...")
-        print(" ".join(pg_dump_cmd))
+        print("🚀 Running pg_dump...")
 
         result = subprocess.run(
             pg_dump_cmd,
@@ -121,12 +110,20 @@ def run_auto_backup():
             text=True
         )
 
-        print("STDOUT:", result.stdout)
-        print("STDERR:", result.stderr)
+        # ---------------- DEBUG OUTPUT ----------------
+        if result.stdout:
+            print("STDOUT:", result.stdout)
+
+        if result.stderr:
+            print("STDERR:", result.stderr)
 
         if result.returncode != 0:
-            print("❌ Backup failed")
+            print("❌ pg_dump FAILED")
+            print("STDOUT:\n", result.stdout)
+            print("STDERR:\n", result.stderr)
+            print("DB_URL USED:\n", DB_URL)
             return None
+
 
         if not os.path.exists(filepath):
             print("❌ Backup file not created")
@@ -138,7 +135,7 @@ def run_auto_backup():
         return filepath
 
     except Exception as e:
-        print(f"❌ Backup exception: {str(e)}")
+        print(f"❌ Backup exception: {e}")
         return None
 
 # ---------------- GET LATEST BACKUP ----------------
@@ -170,7 +167,7 @@ def backup_database():
     filepath = run_auto_backup()
 
     if not filepath:
-        print("⚠️ Backup failed → using latest backup")
+        print("⚠️ Backup failed → trying latest file...")
         filepath = get_latest_backup()
 
     if not filepath or not os.path.exists(filepath):

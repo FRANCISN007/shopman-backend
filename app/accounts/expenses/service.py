@@ -21,7 +21,25 @@ from app.vendor import models as vendor_models
 from app.bank import models as bank_models
 
 
+from zoneinfo import ZoneInfo
+from typing import Optional, Dict, Any
+from sqlalchemy import func, desc
 
+
+
+
+from sqlalchemy import func, desc, cast, Date
+
+
+
+
+from sqlalchemy.orm import joinedload
+from sqlalchemy import func, desc, cast, Date
+from typing import Optional, Dict, Any
+
+
+
+LAGOS_TZ = ZoneInfo("Africa/Lagos")
 
 
 
@@ -255,19 +273,6 @@ def create_expense(
 
 
 
-
-from zoneinfo import ZoneInfo
-from typing import Optional, Dict, Any
-from sqlalchemy import func, desc
-
-LAGOS_TZ = ZoneInfo("Africa/Lagos")
-
-
-from sqlalchemy import func, desc, cast, Date
-
-
-
-
 def list_expenses(
     db: Session,
     current_user: UserDisplaySchema,
@@ -291,43 +296,52 @@ def list_expenses(
     )
 
     # ─── 2. Tenant isolation ─────────────────────────────────────────
-    if "super_admin" in current_user.roles:
-        if business_id is not None:
+    roles = set(current_user.roles)
+
+    if "super_admin" in roles:
+        if business_id:
             query = query.filter(models.Expense.business_id == business_id)
     else:
         if not current_user.business_id:
             raise HTTPException(
                 status_code=403,
-                detail="Current user does not belong to any business"
+                detail="User does not belong to a business"
             )
         query = query.filter(models.Expense.business_id == current_user.business_id)
 
-    # ─── 3. Date filters (use plain date, not tz-aware datetime) ─────
+    # ─── 3. Date filters ─────────────────────────────────────────────
     if start_date:
         query = query.filter(cast(models.Expense.expense_date, Date) >= start_date)
+
     if end_date:
         query = query.filter(cast(models.Expense.expense_date, Date) <= end_date)
 
     # ─── 4. Account type filter ──────────────────────────────────────
     if account_type:
         query = query.filter(
-            func.lower(func.trim(models.Expense.account_type)) == account_type.lower().strip()
+            func.lower(func.trim(models.Expense.account_type)) ==
+            account_type.lower().strip()
         )
 
-    # ─── 5. Total expenses safely ────────────────────────────────────
+    # ─── 5. Total expenses ───────────────────────────────────────────
     total_query = db.query(func.coalesce(func.sum(models.Expense.amount), 0.0)) \
         .filter(models.Expense.is_active == True)
 
     if start_date:
         total_query = total_query.filter(cast(models.Expense.expense_date, Date) >= start_date)
+
     if end_date:
         total_query = total_query.filter(cast(models.Expense.expense_date, Date) <= end_date)
-    if business_id:
+
+    if "super_admin" in roles and business_id:
         total_query = total_query.filter(models.Expense.business_id == business_id)
+
+    elif "super_admin" not in roles:
+        total_query = total_query.filter(models.Expense.business_id == current_user.business_id)
 
     total_expenses = total_query.scalar() or 0.0
 
-    # ─── 6. Fetch paginated results with ordering ────────────────────
+    # ─── 6. Fetch results ───────────────────────────────────────────
     expenses = (
         query
         .order_by(desc(models.Expense.expense_date), desc(models.Expense.created_at))
@@ -336,8 +350,9 @@ def list_expenses(
         .all()
     )
 
-    # ─── 7. Enrich results for display ───────────────────────────────
+    # ─── 7. Enrich results ───────────────────────────────────────────
     enriched_expenses = []
+
     for exp in expenses:
         enriched_expenses.append(
             schemas.ExpenseOut(
@@ -350,22 +365,25 @@ def list_expenses(
                 amount=float(exp.amount),
                 payment_method=exp.payment_method,
                 bank_id=exp.bank_id,
-                expense_date=exp.expense_date.astimezone(LAGOS_TZ) if exp.expense_date else None,
+
+                # ✅ NEW FIELD YOU ADDED
+                vendor_name=exp.vendor.business_name if exp.vendor else None,
+
+                expense_date=exp.expense_date,
                 status=exp.status,
                 is_active=exp.is_active,
-                created_at=exp.created_at.astimezone(LAGOS_TZ) if exp.created_at else None,
+                created_at=exp.created_at,
                 created_by=exp.created_by,
                 created_by_username=exp.creator.username if exp.creator else None,
-                bank_name=exp.bank.name if exp.bank else None,
-                vendor_name=exp.vendor.business_name if exp.vendor else None
+                bank_name=exp.bank.name if exp.bank else None
             )
         )
 
-    # ─── 8. Return response ──────────────────────────────────────────
+    # ─── 8. Response ────────────────────────────────────────────────
     return {
         "total_expenses": float(total_expenses),
-        "expenses": enriched_expenses,
-        "count": len(enriched_expenses)
+        "count": len(enriched_expenses),
+        "expenses": enriched_expenses
     }
 
 
