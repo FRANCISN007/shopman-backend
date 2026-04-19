@@ -26,3 +26,5 @@ class LicenseStatusResponse(BaseModel):
     valid: bool
     expires_on: Optional[datetime] = None
     message: Optional[str] = None
+    warning: Optional[bool] = False
+    days_left: Optional[int] = None

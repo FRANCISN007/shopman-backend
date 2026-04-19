@@ -9,6 +9,10 @@ from sqlalchemy import func
 from datetime import datetime, timedelta
 import os
 
+from math import ceil
+from app.core.timezone import now_wat, to_wat
+
+
 
 
 from app.database import get_db
@@ -99,21 +103,37 @@ def verify_license(
     return result
 
 
+
 @router.get("/check", response_model=schemas.LicenseStatusResponse)
 def check_license_status(
     current_user: UserDisplaySchema = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """
-    Check license status for the logged-in user's business.
-    Super admin always valid.
+    Check license status with accurate 7-day warning (WAT safe).
     """
-    if "super_admin" in current_user.roles:
-        return {"valid": True, "expires_on": None, "message": "Super admin - no license required"}
 
+    # -----------------------------
+    # SUPER ADMIN
+    # -----------------------------
+    if "super_admin" in current_user.roles:
+        return {
+            "valid": True,
+            "expires_on": None,
+            "message": "Super admin - no license required",
+            "warning": False,
+            "days_left": None
+        }
+
+    # -----------------------------
+    # VALIDATE BUSINESS
+    # -----------------------------
     if not current_user.business_id:
         raise HTTPException(403, "User does not belong to any business")
 
+    # -----------------------------
+    # GET LICENSE
+    # -----------------------------
     license_record = (
         db.query(license_models.LicenseKey)
         .filter(
@@ -125,16 +145,60 @@ def check_license_status(
     )
 
     if not license_record:
-        return {"valid": False, "expires_on": None, "message": "No active license found"}
+        return {
+            "valid": False,
+            "expires_on": None,
+            "message": "No active license found",
+            "warning": True,
+            "days_left": None
+        }
 
-    if license_record.expiration_date < datetime.utcnow():
-        return {"valid": False, "expires_on": license_record.expiration_date, "message": "License expired"}
+    # -----------------------------
+    # TIME (WAT SAFE)
+    # -----------------------------
+    now = now_wat()
+    expires_on = to_wat(license_record.expiration_date)
+
+    # -----------------------------
+    # EXPIRED
+    # -----------------------------
+    if expires_on < now:
+        return {
+            "valid": False,
+            "expires_on": expires_on,
+            "message": "License expired",
+            "warning": True,
+            "days_left": 0
+        }
+
+    # -----------------------------
+    # ACCURATE DAYS LEFT
+    # -----------------------------
+    delta_seconds = (expires_on - now).total_seconds()
+    days_left = ceil(delta_seconds / 86400)  # ✅ FIXED HERE
+
+    # -----------------------------
+    # WARNING LOGIC
+    # -----------------------------
+    warning = days_left <= 7
+
+    # -----------------------------
+    # MESSAGE
+    # -----------------------------
+    if warning:
+        message = f"⚠️ License expires in {days_left} day(s). Please renew."
+    else:
+        message = "License valid"
 
     data = {
         "valid": True,
-        "expires_on": license_record.expiration_date,
-        "message": "License valid"
+        "expires_on": expires_on,
+        "message": message,
+        "warning": warning,
+        "days_left": days_left
     }
 
     services.save_license_file(data)
+
     return data
+
