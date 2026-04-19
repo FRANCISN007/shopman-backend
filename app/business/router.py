@@ -41,7 +41,6 @@ def create_business(
 ):
     """
     Super admin creates a new business.
-    The owner_username is explicitly provided (the admin/owner of this business).
     """
     # Prevent duplicate business name
     existing = db.query(models.Business).filter(
@@ -50,32 +49,50 @@ def create_business(
     if existing:
         raise HTTPException(status_code=400, detail="Business name already exists")
 
-    # Prevent duplicate owner_username for businesses (optional but recommended)
+    # Prevent duplicate owner_username
     existing_owner = db.query(models.Business).filter(
         models.Business.owner_username == business_in.owner_username.strip()
     ).first()
     if existing_owner:
         raise HTTPException(status_code=400, detail="This username is already used as owner for another business")
 
-    # Create business with the specified owner_username
+    # Create business
     business = models.Business(
         name=business_in.name.strip(),
         address=business_in.address,
         phone=business_in.phone,
         email=business_in.email,
-        owner_username=business_in.owner_username.strip()  # ← from input, NOT current_user
+        owner_username=business_in.owner_username.strip()
     )
 
     db.add(business)
     db.commit()
     db.refresh(business)
 
-    # Safe response with computed license_active
-    biz_out = schemas.BusinessOut.from_orm(business)
-    biz_out.license_active = business.is_license_active(db)
-    # owner_username is already in biz_out from the column
+    # Get latest license info for response
+    latest_license = (
+        db.query(license_models.LicenseKey)
+        .filter(license_models.LicenseKey.business_id == business.id)
+        .order_by(license_models.LicenseKey.expiration_date.desc())
+        .first()
+    )
 
-    return biz_out
+    is_active = (
+        latest_license.is_active and latest_license.expiration_date >= now_lagos
+    ) if latest_license else False
+
+    # Return clean dict instead of mutating Pydantic object
+    return {
+        "id": business.id,
+        "name": business.name,
+        "address": business.address,
+        "phone": business.phone,
+        "email": business.email,
+        "owner_username": business.owner_username,
+        "created_at": business.created_at,
+        "license_active": is_active,
+        "expiration_date": latest_license.expiration_date if latest_license else None,
+    }
 
 
 
