@@ -260,7 +260,10 @@ def update_product(
     ),
 ):
     updated_product = service.update_product(
-        db, product_id, product, current_user
+        db=db,
+        product_id=product_id,
+        product=product,
+        current_user=current_user
     )
 
     if not updated_product:
@@ -276,10 +279,10 @@ def update_product(
         type=updated_product.type,
         cost_price=updated_product.cost_price,
         selling_price=updated_product.selling_price,
-        sku=product.sku,          # <-- assign here
-        barcode=product.barcode,
+        sku=updated_product.sku,
+        barcode=updated_product.barcode,
         is_active=updated_product.is_active,
-        business_id=product.business_id,
+        business_id=updated_product.business_id,
         created_at=updated_product.created_at,
     )
 

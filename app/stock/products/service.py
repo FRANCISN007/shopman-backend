@@ -569,10 +569,13 @@ def update_product(
         .filter(models.Product.id == product_id)
     )
 
-    # 🔐 Tenant isolation
+    # --------------------------------
+    # TENANT ISOLATION
+    # --------------------------------
     if "super_admin" not in current_user.roles:
         query = query.filter(
-            models.Product.business_id == current_user.business_id
+            models.Product.business_id ==
+            current_user.business_id
         )
 
     db_product = query.first()
@@ -582,19 +585,28 @@ def update_product(
 
     update_data = product.model_dump(exclude_unset=True)
 
-    # -----------------------
-    # Handle category update (Tenant Safe)
-    # -----------------------
+    # --------------------------------
+    # CATEGORY UPDATE
+    # --------------------------------
     if "category" in update_data:
-        category_name = update_data.pop("category").strip()
 
-        category_query = db.query(category_models.Category).filter(
-            category_models.Category.name == category_name
+        category_name = (
+            update_data.pop("category")
+            .strip()
+        )
+
+        category_query = (
+            db.query(category_models.Category)
+            .filter(
+                category_models.Category.name ==
+                category_name
+            )
         )
 
         if "super_admin" not in current_user.roles:
             category_query = category_query.filter(
-                category_models.Category.business_id == current_user.business_id
+                category_models.Category.business_id ==
+                current_user.business_id
             )
 
         category = category_query.first()
@@ -602,25 +614,69 @@ def update_product(
         if not category:
             raise HTTPException(
                 status_code=400,
-                detail=f"Category '{category_name}' does not exist."
+                detail=(
+                    f"Category '{category_name}' "
+                    f"does not exist."
+                )
             )
 
         db_product.category_id = category.id
 
-    # -----------------------
-    # Duplicate protection (Tenant Safe)
-    # -----------------------
-    new_name = update_data.get("name", db_product.name)
+    # --------------------------------
+    # BARCODE UPDATE (OPTIONAL)
+    # --------------------------------
+    if "barcode" in update_data:
 
-    duplicate_query = db.query(models.Product).filter(
-        models.Product.id != product_id,
-        models.Product.name == new_name,
-        models.Product.category_id == db_product.category_id,
+        barcode = update_data.pop("barcode")
+
+        if barcode is not None:
+            barcode = str(barcode).strip()
+
+        if barcode == "":
+            barcode = None
+
+        if barcode:
+            barcode_exists = (
+                db.query(models.Product)
+                .filter(
+                    models.Product.barcode == barcode,
+                    models.Product.id != product_id,
+                    models.Product.business_id ==
+                    db_product.business_id
+                )
+                .first()
+            )
+
+            if barcode_exists:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Barcode already exists."
+                )
+
+        db_product.barcode = barcode
+
+    # --------------------------------
+    # DUPLICATE PRODUCT CHECK
+    # --------------------------------
+    new_name = update_data.get(
+        "name",
+        db_product.name
+    )
+
+    duplicate_query = (
+        db.query(models.Product)
+        .filter(
+            models.Product.id != product_id,
+            models.Product.name == new_name,
+            models.Product.category_id ==
+            db_product.category_id,
+        )
     )
 
     if "super_admin" not in current_user.roles:
         duplicate_query = duplicate_query.filter(
-            models.Product.business_id == current_user.business_id
+            models.Product.business_id ==
+            current_user.business_id
         )
 
     duplicate = duplicate_query.first()
@@ -628,12 +684,15 @@ def update_product(
     if duplicate:
         raise HTTPException(
             status_code=400,
-            detail="Product with same name already exists in this category."
+            detail=(
+                "Product with same name "
+                "already exists in this category."
+            )
         )
 
-    # -----------------------
-    # Update remaining fields
-    # -----------------------
+    # --------------------------------
+    # UPDATE REMAINING FIELDS
+    # --------------------------------
     for field, value in update_data.items():
         setattr(db_product, field, value)
 
@@ -641,8 +700,6 @@ def update_product(
     db.refresh(db_product)
 
     return db_product
-
-
 
 
 def delete_product(db: Session, product_id: int, current_user):
