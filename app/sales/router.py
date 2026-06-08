@@ -550,7 +550,7 @@ def delete_sale(
     from app.payments import service as payment_service
 
     # Check for payments first (tenant-safe inside service)
-    payments = payment_service.list_payments_by_sale(db, invoice_no)
+    payments = payment_service.list_payments_by_sale(db, invoice_no,  current_user)
     if payments:
         raise HTTPException(
             status_code=400,

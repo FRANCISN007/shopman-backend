@@ -96,6 +96,8 @@ def list_payments(
     response_model=List[schemas.PaymentOut],
     status_code=status.HTTP_200_OK
 )
+
+
 def list_payments_by_sale(
     invoice_no: int,
     db: Session = Depends(get_db),

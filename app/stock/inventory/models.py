@@ -19,6 +19,8 @@ class Inventory(Base):
     product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
     product = relationship("Product")
 
+    opening_stock = Column(Float, default=0)
+
     quantity_in = Column(Float, default=0)
     quantity_out = Column(Float, default=0)
     adjustment_total = Column(Float, default=0)

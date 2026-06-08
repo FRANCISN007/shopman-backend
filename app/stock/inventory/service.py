@@ -31,6 +31,8 @@ def list_inventory(
             Inventory.id,
             Inventory.product_id,
             Product.name.label("product_name"),
+            Product.cost_price.label("product_cost_price"),  # <-- ADD THIS
+            Inventory.opening_stock,
             Inventory.quantity_in,
             Inventory.quantity_out,
             Inventory.adjustment_total,
@@ -74,28 +76,35 @@ def list_inventory(
     grand_total = 0
 
     for item in inventory_list:
-        # Latest purchase cost for valuation
+
         latest_purchase_item = (
             db.query(PurchaseItem)
             .join(Purchase)
             .filter(
                 PurchaseItem.product_id == item.product_id,
-                Purchase.business_id == item.business_id  # tenant safety
+                Purchase.business_id == item.business_id
             )
             .order_by(PurchaseItem.id.desc())
             .first()
         )
 
-        latest_cost = latest_purchase_item.cost_price if latest_purchase_item else 0
+        if latest_purchase_item:
+            latest_cost = latest_purchase_item.cost_price
+        else:
+            latest_cost = item.product_cost_price or 0
 
+        inventory_value = (
+            (item.current_stock or 0)
+            * (latest_cost or 0)
+        )
 
-        inventory_value = item.current_stock * latest_cost
         grand_total += inventory_value
 
         result.append({
             "id": item.id,
             "product_id": item.product_id,
             "product_name": item.product_name,
+            "opening_stock": item.opening_stock,
             "quantity_in": item.quantity_in,
             "quantity_out": item.quantity_out,
             "adjustment_total": item.adjustment_total,
@@ -133,25 +142,65 @@ def get_inventory_orm_by_product(db: Session, product_id: int, current_user=None
 # --------------------------
 # Internal: add stock (Purchase)
 # --------------------------
-def add_stock(db: Session, product_id: int, quantity: float, current_user=None, commit: bool = False):
-    inventory = get_inventory_orm_by_product(db, product_id, current_user)
+
+def calculate_current_stock(inventory):
+    return (
+        (inventory.opening_stock or 0)
+        + (inventory.quantity_in or 0)
+        - (inventory.quantity_out or 0)
+        + (inventory.adjustment_total or 0)
+    )
+
+def add_stock(
+    db: Session,
+    product_id: int,
+    quantity: float,
+    current_user=None,
+    commit: bool = False
+):
+    inventory = get_inventory_orm_by_product(
+        db,
+        product_id,
+        current_user
+    )
 
     if not inventory:
         business_id = None
-        if current_user and "super_admin" not in getattr(current_user, "roles", []):
-            business_id = getattr(current_user, "business_id", None)
+
+        if current_user and "super_admin" not in getattr(
+            current_user,
+            "roles",
+            []
+        ):
+            business_id = getattr(
+                current_user,
+                "business_id",
+                None
+            )
+
         inventory = Inventory(
             product_id=product_id,
             business_id=business_id,
+            opening_stock=0,
             quantity_in=quantity,
             quantity_out=0,
             adjustment_total=0,
             current_stock=quantity,
         )
+
         db.add(inventory)
+
     else:
-        inventory.quantity_in += quantity
-        inventory.current_stock = inventory.quantity_in - inventory.quantity_out + inventory.adjustment_total
+        inventory.quantity_in = (
+            inventory.quantity_in or 0
+        ) + quantity
+
+        if inventory.quantity_in < 0:
+            inventory.quantity_in = 0
+
+        inventory.current_stock = calculate_current_stock(
+            inventory
+        )
 
     if commit:
         db.commit()
@@ -173,6 +222,7 @@ def remove_stock(db: Session, product_id: int, quantity: float, current_user=Non
         inventory = Inventory(
             product_id=product_id,
             business_id=business_id,
+            opening_stock=0,
             quantity_in=0,
             quantity_out=0,
             adjustment_total=0,
@@ -181,8 +231,11 @@ def remove_stock(db: Session, product_id: int, quantity: float, current_user=Non
         db.add(inventory)
         db.flush()
 
-    inventory.quantity_out += quantity
-    inventory.current_stock = inventory.quantity_in - inventory.quantity_out + inventory.adjustment_total
+    inventory.quantity_out = (
+        inventory.quantity_out or 0
+    ) + quantity
+
+    inventory.current_stock = calculate_current_stock(inventory)
 
     if commit:
         db.commit()
@@ -204,7 +257,15 @@ def adjust_stock(db: Session, product_id: int, quantity: float, reason: str, adj
         quantity_out = inventory.quantity_out or 0
         adjustment_total = inventory.adjustment_total or 0
 
-        new_stock = quantity_in - quantity_out + adjustment_total + quantity
+        opening_stock = inventory.opening_stock or 0
+
+        new_stock = (
+            opening_stock
+            + quantity_in
+            - quantity_out
+            + adjustment_total
+            + quantity
+        )
         if new_stock < 0:
             raise HTTPException(
                 status_code=400,
@@ -232,35 +293,64 @@ def adjust_stock(db: Session, product_id: int, quantity: float, reason: str, adj
 # --------------------------
 # Revert stock when deleting Purchase
 # --------------------------
-def revert_purchase_stock(db: Session, product_id: int, quantity: float, current_user=None):
-    with db.begin():
-        inventory = get_inventory_orm_by_product(db, product_id, current_user)
-        if not inventory:
-            return
+def revert_purchase_stock(
+    db: Session,
+    product_id: int,
+    quantity: float,
+    current_user=None
+):
+    inventory = get_inventory_orm_by_product(
+        db,
+        product_id,
+        current_user
+    )
 
-        inventory.quantity_in -= quantity
-        inventory.current_stock = inventory.quantity_in - inventory.quantity_out + inventory.adjustment_total
-        if inventory.quantity_in < 0:
-            inventory.quantity_in = 0
-            inventory.current_stock = max(inventory.current_stock, 0)
+    if not inventory:
+        return
 
-        db.flush()
-        db.refresh(inventory)
+    inventory.quantity_in = (
+        inventory.quantity_in or 0
+    ) - quantity
+
+    if inventory.quantity_in < 0:
+        inventory.quantity_in = 0
+
+    inventory.current_stock = calculate_current_stock(
+        inventory
+    )
+
+    db.flush()
+    db.refresh(inventory)
 
 
 # --------------------------
 # Revert stock when deleting Sale
 # --------------------------
-def revert_sale_stock(db: Session, product_id: int, quantity: float, current_user=None):
-    with db.begin():
-        inventory = get_inventory_orm_by_product(db, product_id, current_user)
-        if not inventory:
-            return
+def revert_sale_stock(
+    db: Session,
+    product_id: int,
+    quantity: float,
+    current_user=None
+):
+    inventory = get_inventory_orm_by_product(
+        db,
+        product_id,
+        current_user
+    )
 
-        inventory.quantity_out -= quantity
-        inventory.current_stock = inventory.quantity_in - inventory.quantity_out + inventory.adjustment_total
-        if inventory.quantity_out < 0:
-            inventory.quantity_out = 0
+    if not inventory:
+        return
 
-        db.flush()
-        db.refresh(inventory)
+    inventory.quantity_out = (
+        inventory.quantity_out or 0
+    ) - quantity
+
+    if inventory.quantity_out < 0:
+        inventory.quantity_out = 0
+
+    inventory.current_stock = calculate_current_stock(
+        inventory
+    )
+
+    db.flush()
+    db.refresh(inventory)

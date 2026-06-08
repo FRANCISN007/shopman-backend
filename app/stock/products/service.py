@@ -180,12 +180,12 @@ def import_products_from_excel(
     current_user,
     business_id: int | None
 ):
-
     # -----------------------------
     # 1️⃣ RESOLVE BUSINESS
     # -----------------------------
     if "admin" in current_user.roles:
         business_id = current_user.business_id
+
         if not business_id:
             raise HTTPException(
                 status_code=400,
@@ -216,9 +216,12 @@ def import_products_from_excel(
             detail="Invalid Excel file"
         )
 
-    df.columns = [c.strip().lower() for c in df.columns]
+    # Normalize headers
+    df.columns = [str(c).strip().lower() for c in df.columns]
 
-    # Barcode is now optional
+    # -----------------------------
+    # REQUIRED COLUMNS
+    # -----------------------------
     required_cols = ["name", "category"]
 
     for col in required_cols:
@@ -232,15 +235,24 @@ def import_products_from_excel(
     skipped = 0
 
     # -----------------------------
-    # 3️⃣ LOOP ROWS
+    # 3️⃣ PROCESS ROWS
     # -----------------------------
-    for _, row in df.iterrows():
-        try:
+    for index, row in df.iterrows():
 
+        try:
+            # -----------------------------
+            # BASIC FIELDS
+            # -----------------------------
             name = str(row.get("name", "")).strip()
             category_name = str(row.get("category", "")).strip()
 
-            if not name or not category_name:
+            if not name:
+                print(f"Row {index + 2}: Missing product name")
+                skipped += 1
+                continue
+
+            if not category_name:
+                print(f"Row {index + 2}: Missing category")
                 skipped += 1
                 continue
 
@@ -257,23 +269,54 @@ def import_products_from_excel(
                 if barcode == "":
                     barcode = None
 
+            # -----------------------------
+            # OPTIONAL TYPE
+            # -----------------------------
             product_type = (
                 str(row.get("type")).strip()
                 if pd.notna(row.get("type"))
                 else None
             )
 
-            cost_price = (
-                float(row.get("cost_price"))
-                if pd.notna(row.get("cost_price"))
-                else None
-            )
+            # -----------------------------
+            # OPTIONAL COST PRICE
+            # -----------------------------
+            try:
+                cost_price = (
+                    float(row.get("cost_price"))
+                    if pd.notna(row.get("cost_price"))
+                    else None
+                )
+            except Exception:
+                cost_price = None
 
-            selling_price = (
-                float(row.get("selling_price"))
-                if pd.notna(row.get("selling_price"))
-                else None
-            )
+            # -----------------------------
+            # OPTIONAL SELLING PRICE
+            # -----------------------------
+            try:
+                selling_price = (
+                    float(row.get("selling_price"))
+                    if pd.notna(row.get("selling_price"))
+                    else None
+                )
+            except Exception:
+                selling_price = None
+
+            # -----------------------------
+            # OPENING STOCK (QTY)
+            # -----------------------------
+            try:
+                qty = (
+                    float(row.get("qty"))
+                    if pd.notna(row.get("qty"))
+                    else 0
+                )
+
+                if qty < 0:
+                    qty = 0
+
+            except Exception:
+                qty = 0
 
             # -----------------------------
             # CATEGORY LOOKUP
@@ -288,13 +331,19 @@ def import_products_from_excel(
             )
 
             if not category:
+                print(
+                    f"Row {index + 2}: "
+                    f"Category '{category_name}' not found "
+                    f"for business {business_id}"
+                )
+
                 skipped += 1
                 continue
 
             # -----------------------------
-            # DUPLICATE PRODUCT CHECK
+            # PRODUCT DUPLICATE CHECK
             # -----------------------------
-            exists = (
+            existing_product = (
                 db.query(models.Product)
                 .filter(
                     models.Product.name == name,
@@ -304,15 +353,20 @@ def import_products_from_excel(
                 .first()
             )
 
-            if exists:
+            if existing_product:
+                print(
+                    f"Row {index + 2}: "
+                    f"Product '{name}' already exists"
+                )
+
                 skipped += 1
                 continue
 
             # -----------------------------
             # BARCODE DUPLICATE CHECK
-            # ONLY IF BARCODE EXISTS
             # -----------------------------
             if barcode:
+
                 barcode_exists = (
                     db.query(models.Product)
                     .filter(
@@ -323,6 +377,11 @@ def import_products_from_excel(
                 )
 
                 if barcode_exists:
+                    print(
+                        f"Row {index + 2}: "
+                        f"Barcode '{barcode}' already exists"
+                    )
+
                     skipped += 1
                     continue
 
@@ -336,7 +395,7 @@ def import_products_from_excel(
                 business_id=business_id,
                 cost_price=cost_price,
                 selling_price=selling_price,
-                barcode=barcode,  # can be None
+                barcode=barcode,
                 sku=f"SKU-{uuid4().hex[:8]}",
                 is_active=True,
             )
@@ -347,27 +406,35 @@ def import_products_from_excel(
             # -----------------------------
             # CREATE INVENTORY
             # -----------------------------
-            db.add(
-                inventory_models.Inventory(
-                    product_id=db_product.id,
-                    quantity_in=0,
-                    quantity_out=0,
-                    adjustment_total=0,
-                    current_stock=0,
-                    business_id=business_id,
-                )
+            inventory = inventory_models.Inventory(
+                product_id=db_product.id,
+                business_id=business_id,
+                opening_stock=qty,
+                quantity_in=0,
+                quantity_out=0,
+                adjustment_total=0,
+                current_stock=qty,
             )
+
+            db.add(inventory)
 
             created += 1
 
-        except Exception as e:
             print(
-                f"Row failed: "
-                f"name={row.get('name')}, "
-                f"barcode={row.get('barcode')}, "
-                f"category={row.get('category')}"
+                f"Row {index + 2}: "
+                f"Imported '{name}' "
+                f"(Opening Stock={qty})"
             )
-            print("Error:", str(e))
+
+        except Exception as e:
+
+            print(
+                f"Row {index + 2} FAILED\n"
+                f"Name: {row.get('name')}\n"
+                f"Category: {row.get('category')}\n"
+                f"Barcode: {row.get('barcode')}\n"
+                f"Error: {str(e)}"
+            )
 
             skipped += 1
             continue
@@ -377,11 +444,13 @@ def import_products_from_excel(
     # -----------------------------
     try:
         db.commit()
-    except IntegrityError:
+
+    except IntegrityError as e:
         db.rollback()
+
         raise HTTPException(
             status_code=400,
-            detail="Import failed due to duplicates"
+            detail=f"Import failed due to database constraint: {str(e)}"
         )
 
     return {
@@ -389,7 +458,6 @@ def import_products_from_excel(
         "created": created,
         "skipped": skipped,
     }
-
 
 
 def search_products(db: Session, query: str, current_user):
