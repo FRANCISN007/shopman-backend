@@ -174,22 +174,36 @@ def get_products(
 
 
 
-def import_products_from_excel(db: Session, file: UploadFile, current_user, business_id: int | None):
-    
+def import_products_from_excel(
+    db: Session,
+    file: UploadFile,
+    current_user,
+    business_id: int | None
+):
+
     # -----------------------------
     # 1️⃣ RESOLVE BUSINESS
     # -----------------------------
     if "admin" in current_user.roles:
         business_id = current_user.business_id
         if not business_id:
-            raise HTTPException(status_code=400, detail="Admin has no business")
+            raise HTTPException(
+                status_code=400,
+                detail="Admin has no business"
+            )
 
     elif "super_admin" in current_user.roles:
         if not business_id:
-            raise HTTPException(status_code=400, detail="business_id is required")
+            raise HTTPException(
+                status_code=400,
+                detail="business_id is required"
+            )
 
     else:
-        raise HTTPException(status_code=403, detail="Not allowed")
+        raise HTTPException(
+            status_code=403,
+            detail="Not allowed"
+        )
 
     # -----------------------------
     # 2️⃣ READ EXCEL
@@ -197,16 +211,22 @@ def import_products_from_excel(db: Session, file: UploadFile, current_user, busi
     try:
         df = pd.read_excel(file.file)
     except Exception:
-        raise HTTPException(status_code=400, detail="Invalid Excel file")
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid Excel file"
+        )
 
-    # Normalize columns
     df.columns = [c.strip().lower() for c in df.columns]
 
-    required_cols = ["barcode", "name", "category"]
+    # Barcode is now optional
+    required_cols = ["name", "category"]
 
     for col in required_cols:
         if col not in df.columns:
-            raise HTTPException(status_code=400, detail=f"Missing column: {col}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Missing column: {col}"
+            )
 
     created = 0
     skipped = 0
@@ -216,6 +236,7 @@ def import_products_from_excel(db: Session, file: UploadFile, current_user, busi
     # -----------------------------
     for _, row in df.iterrows():
         try:
+
             name = str(row.get("name", "")).strip()
             category_name = str(row.get("category", "")).strip()
 
@@ -223,15 +244,36 @@ def import_products_from_excel(db: Session, file: UploadFile, current_user, busi
                 skipped += 1
                 continue
 
-            barcode = str(row.get("barcode", "")).strip()
+            # -----------------------------
+            # OPTIONAL BARCODE
+            # -----------------------------
+            barcode = row.get("barcode")
 
-            if not barcode:
-                skipped += 1
-                continue
+            if pd.isna(barcode):
+                barcode = None
+            else:
+                barcode = str(barcode).strip()
 
-            product_type = str(row.get("type")).strip() if row.get("type") else None
-            cost_price = float(row.get("cost_price")) if row.get("cost_price") else None
-            selling_price = float(row.get("selling_price")) if row.get("selling_price") else None
+                if barcode == "":
+                    barcode = None
+
+            product_type = (
+                str(row.get("type")).strip()
+                if pd.notna(row.get("type"))
+                else None
+            )
+
+            cost_price = (
+                float(row.get("cost_price"))
+                if pd.notna(row.get("cost_price"))
+                else None
+            )
+
+            selling_price = (
+                float(row.get("selling_price"))
+                if pd.notna(row.get("selling_price"))
+                else None
+            )
 
             # -----------------------------
             # CATEGORY LOOKUP
@@ -250,29 +292,39 @@ def import_products_from_excel(db: Session, file: UploadFile, current_user, busi
                 continue
 
             # -----------------------------
-            # DUPLICATE CHECK
+            # DUPLICATE PRODUCT CHECK
             # -----------------------------
-            exists = db.query(models.Product).filter(
-                models.Product.name == name,
-                models.Product.category_id == category.id,
-                models.Product.business_id == business_id,
-            ).first()
+            exists = (
+                db.query(models.Product)
+                .filter(
+                    models.Product.name == name,
+                    models.Product.category_id == category.id,
+                    models.Product.business_id == business_id,
+                )
+                .first()
+            )
 
             if exists:
                 skipped += 1
                 continue
 
-            # Optional barcode duplicate check
+            # -----------------------------
+            # BARCODE DUPLICATE CHECK
+            # ONLY IF BARCODE EXISTS
+            # -----------------------------
             if barcode:
-                barcode_exists = db.query(models.Product).filter(
-                    models.Product.barcode == barcode,
-                    models.Product.business_id == business_id
-                ).first()
+                barcode_exists = (
+                    db.query(models.Product)
+                    .filter(
+                        models.Product.barcode == barcode,
+                        models.Product.business_id == business_id,
+                    )
+                    .first()
+                )
 
                 if barcode_exists:
                     skipped += 1
                     continue
-
 
             # -----------------------------
             # CREATE PRODUCT
@@ -284,9 +336,9 @@ def import_products_from_excel(db: Session, file: UploadFile, current_user, busi
                 business_id=business_id,
                 cost_price=cost_price,
                 selling_price=selling_price,
-                barcode=barcode,
-                sku=f"SKU-{uuid4().hex[:8]}",  # auto SKU (hidden)
-                is_active=True
+                barcode=barcode,  # can be None
+                sku=f"SKU-{uuid4().hex[:8]}",
+                is_active=True,
             )
 
             db.add(db_product)
@@ -308,7 +360,15 @@ def import_products_from_excel(db: Session, file: UploadFile, current_user, busi
 
             created += 1
 
-        except Exception:
+        except Exception as e:
+            print(
+                f"Row failed: "
+                f"name={row.get('name')}, "
+                f"barcode={row.get('barcode')}, "
+                f"category={row.get('category')}"
+            )
+            print("Error:", str(e))
+
             skipped += 1
             continue
 
@@ -319,7 +379,10 @@ def import_products_from_excel(db: Session, file: UploadFile, current_user, busi
         db.commit()
     except IntegrityError:
         db.rollback()
-        raise HTTPException(status_code=400, detail="Import failed due to duplicates")
+        raise HTTPException(
+            status_code=400,
+            detail="Import failed due to duplicates"
+        )
 
     return {
         "message": "Import completed",
