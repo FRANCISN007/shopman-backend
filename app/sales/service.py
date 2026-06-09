@@ -205,7 +205,9 @@ def create_sale_full(
         )
 
         historical_cost = (
-            latest_purchase_item.cost_price if latest_purchase_item else 0.0
+            latest_purchase_item.cost_price
+            if latest_purchase_item
+            else (product.cost_price or 0.0)
         )
 
         # ─────────────────────────────────────
@@ -361,7 +363,11 @@ def create_sale_item(
         .first()
     )
 
-    historical_cost = latest_purchase_item.cost_price if latest_purchase_item else 0.0
+    historical_cost = (
+        latest_purchase_item.cost_price
+        if latest_purchase_item
+        else (product.cost_price or 0.0)
+    )
 
     # ─── 4️⃣ Stock validation ────────────────────────────────────────
     stock_entry = inventory_service.get_inventory_orm_by_product(

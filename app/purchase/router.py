@@ -29,7 +29,7 @@ def create_purchase(
     purchase: schemas.PurchaseCreate,
     db: Session = Depends(get_db),
     current_user: UserDisplaySchema = Depends(
-        role_required(["user", "manager", "admin", "super_admin"])
+        role_required(["manager", "admin", "super_admin"])
     ),
 ):
     purchase_data = purchase.dict(exclude_unset=True)
