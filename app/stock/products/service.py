@@ -143,13 +143,16 @@ def get_products(
 
     # 🔑 TENANT ISOLATION
     if "super_admin" in current_user.roles:
-        # Super admin can filter by business_id if provided
-        if business_id:
-            query = query.filter(models.Product.business_id == business_id)
-        # else → no filter = see all businesses
+        # Super admin MUST choose a business
+        if not business_id:
+            return []
+
+        query = query.filter(
+            models.Product.business_id == business_id
+        )
 
     else:
-        # Normal users restricted
+        # Normal users restricted to their own business
         query = query.filter(
             models.Product.business_id == current_user.business_id
         )
