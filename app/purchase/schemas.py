@@ -1,6 +1,13 @@
 from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional, List
+from pydantic import BaseModel, Field
+
+class PurchaseBase(BaseModel):
+    invoice_no: str
+    vendor_id: int = Field(..., gt=0)
+    business_id: Optional[int] = None
+    purchase_date: Optional[datetime] = None
 
 
 class PurchaseItemBase(BaseModel):
@@ -29,7 +36,7 @@ class PurchaseItemOut(PurchaseItemBase):
 
 class PurchaseBase(BaseModel):
     invoice_no: str
-    vendor_id: Optional[int] = None
+    vendor_id: int = Field(..., gt=0)
     business_id: Optional[int] = None
     purchase_date: Optional[datetime] = None
 

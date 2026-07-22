@@ -38,19 +38,24 @@ def create_purchase(db, purchase, current_user):
         )
 
     # -------------------- Validate Vendor --------------------
-    vendor = None
-    vendor_name = None
-    if purchase.vendor_id:
-        vendor = db.query(vendor_models.Vendor).filter(
-            vendor_models.Vendor.id == purchase.vendor_id,
-            vendor_models.Vendor.business_id == business_id
-        ).first()
-        if not vendor:
-            raise HTTPException(
-                status_code=404,
-                detail="Vendor not found for this business"
-            )
-        vendor_name = vendor.business_name
+    if not purchase.vendor_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Vendor is required"
+        )
+
+    vendor = db.query(vendor_models.Vendor).filter(
+        vendor_models.Vendor.id == purchase.vendor_id,
+        vendor_models.Vendor.business_id == business_id
+    ).first()
+
+    if not vendor:
+        raise HTTPException(
+            status_code=404,
+            detail="Vendor not found for this business"
+        )
+
+    vendor_name = vendor.business_name
 
     try:
         # -------------------- 1️⃣ Create Purchase Header --------------------
@@ -491,12 +496,11 @@ def delete_purchase(
     # 2️⃣ Reverse Inventory for all items
     # ===================================
     for item in purchase.items:
-        inventory_service.add_stock(
-            db,
+        inventory_service.revert_purchase_stock(
+            db=db,
             product_id=item.product_id,
-            quantity=-item.quantity,  # 🔁 reverse stock
+            quantity=item.quantity,
             current_user=current_user,
-            commit=False,
         )
 
     # ===================================
